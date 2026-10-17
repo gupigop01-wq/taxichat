@@ -51,7 +51,6 @@ if (typeof window !== "undefined" && window.speechSynthesis) {
 function speakNow(text) {
   if (typeof window === "undefined" || !window.speechSynthesis || !text) return;
   try {
-    window.speechSynthesis.cancel();
     const utterance = new SpeechSynthesisUtterance(text);
     const voice = pickRussianVoice();
     if (voice) utterance.voice = voice;
@@ -77,23 +76,17 @@ const speak = (text) => {
     pendingSpeech.push(text);
     return;
   }
-  // Voices may still be loading: try now, and once more when they arrive
+  // Speak now even without a known voice list: Chrome picks a default voice
+  // itself. A Russian voice is only an improvement, not a precondition.
+  speakNow(text);
+  // If voices arrive later, prefer them for subsequent notices
   if (!voices.length) {
-    pendingSpeech.push(text);
-    const retry = () => {
-      loadVoices();
-      if (window.speechSynthesis.speaking || window.speechSynthesis.pending) return;
-      flushSpeech();
-    };
     const prev = window.speechSynthesis.onvoiceschanged;
     window.speechSynthesis.onvoiceschanged = () => {
       if (typeof prev === "function") prev();
-      retry();
+      loadVoices();
     };
-    setTimeout(retry, 400);
-    return;
   }
-  speakNow(text);
 };
 
 function NotificationItem({ item, onDismiss }) {
