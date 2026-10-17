@@ -7,13 +7,93 @@ import { motion, AnimatePresence } from "framer-motion";
 // Auto-dismiss: every notification leaves on its own after this delay
 const LIFETIME_MS = 60 * 1000;
 
-// Voice: notifications marked speak=true are read aloud (Russian)
+// Voice: notifications marked speak=true are read aloud (Russian).
+// Chrome on Android blocks speechSynthesis until the page has been touched
+// (autoplay policy), and voices load asynchronously. So we:
+//  - pick a Russian voice once the list is available,
+//  - queue the text if speech is still locked and flush it on the first
+//    user gesture (tap/click/key), which is what unlocks the synthesizer.
+let voices = [];
+const loadVoices = () => {
+  if (typeof window === "undefined" || !window.speechSynthesis) return;
+  voices = window.speechSynthesis.getVoices() || [];
+};
+if (typeof window !== "undefined" && window.speechSynthesis) {
+  loadVoices();
+  window.speechSynthesis.onvoiceschanged = loadVoices;
+}
+
+const pickRussianVoice = () =>
+  voices.find((v) => v.lang?.toLowerCase().startsWith("ru")) ||
+  voices.find((v) => /russian|русск/i.test(v.name || "")) ||
+  null;
+
+let pendingSpeech = [];
+let unlocked = false;
+
+// Mark the synthesizer as unlocked on the very first gesture on the page,
+// whatever it is, so notices that arrive later speak without extra taps.
+const unlockOnce = () => {
+  unlocked = true;
+  window.removeEventListener("pointerdown", unlockOnce);
+  window.removeEventListener("click", unlockOnce);
+  window.removeEventListener("keydown", unlockOnce);
+  window.removeEventListener("touchstart", unlockOnce);
+  flushSpeech();
+};
+if (typeof window !== "undefined" && window.speechSynthesis) {
+  window.addEventListener("pointerdown", unlockOnce);
+  window.addEventListener("click", unlockOnce);
+  window.addEventListener("keydown", unlockOnce);
+  window.addEventListener("touchstart", unlockOnce);
+}
+
+function speakNow(text) {
+  if (typeof window === "undefined" || !window.speechSynthesis || !text) return;
+  try {
+    window.speechSynthesis.cancel();
+    const utterance = new SpeechSynthesisUtterance(text);
+    const voice = pickRussianVoice();
+    if (voice) utterance.voice = voice;
+    utterance.lang = voice?.lang || "ru-RU";
+    utterance.rate = 1;
+    window.speechSynthesis.speak(utterance);
+  } catch (err) {
+    // Synthesizer unavailable: keep the app quiet instead of crashing
+  }
+}
+
+const flushSpeech = () => {
+  if (!window.speechSynthesis) return;
+  const queue = pendingSpeech;
+  pendingSpeech = [];
+  queue.forEach((text) => speakNow(text));
+};
+
 const speak = (text) => {
   if (typeof window === "undefined" || !window.speechSynthesis || !text) return;
-  const utterance = new SpeechSynthesisUtterance(text);
-  utterance.lang = "ru-RU";
-  utterance.rate = 1;
-  window.speechSynthesis.speak(utterance);
+  // Chrome locks speech until the page has been touched: queue until unlocked
+  if (!unlocked) {
+    pendingSpeech.push(text);
+    return;
+  }
+  // Voices may still be loading: try now, and once more when they arrive
+  if (!voices.length) {
+    pendingSpeech.push(text);
+    const retry = () => {
+      loadVoices();
+      if (window.speechSynthesis.speaking || window.speechSynthesis.pending) return;
+      flushSpeech();
+    };
+    const prev = window.speechSynthesis.onvoiceschanged;
+    window.speechSynthesis.onvoiceschanged = () => {
+      if (typeof prev === "function") prev();
+      retry();
+    };
+    setTimeout(retry, 400);
+    return;
+  }
+  speakNow(text);
 };
 
 function NotificationItem({ item, onDismiss }) {

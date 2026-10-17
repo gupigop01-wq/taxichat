@@ -2,12 +2,16 @@ import { createSlice } from "@reduxjs/toolkit";
 
 const initialState = [];
 
+// Monotonic id: two notices added in the same millisecond still differ, so
+// list keys stay unique and every notice is rendered (and voiced).
+let nextId = 1;
+
 const notificationSlice = createSlice({
   name: "notification",
   initialState,
   reducers: {
     addNotification: (state, { payload }) => {
-      const id = Date.now();
+      const id = nextId++;
       state.push({
         ...payload,
         id,
