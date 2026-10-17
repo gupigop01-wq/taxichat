@@ -21,19 +21,29 @@ const useOrderNotices = ({ role, userId }) => {
 
   useEffect(() => {
     const show = (notice) => dispatch(notificationActions.addNotification(notice));
+    // De-duplicate notices: the same event may arrive through several socket
+    // rooms (personal + order). One signed key shows one notice only.
+    const shownKeys = new Set();
+    const showOnce = (key, notice) => {
+      const signed = `${key}:${notice?.message ?? ""}`;
+      if (shownKeys.has(signed)) return;
+      shownKeys.add(signed);
+      if (shownKeys.size > 200) shownKeys.clear();
+      show(notice);
+    };
 
     const onNew = () => {
       if (["driver", "dispatcher", "region_admin"].includes(roleRef.current)) show(newOrderNotice());
     };
     const onOffer = (payload) => {
-      if (roleRef.current === "passenger") show(newOfferNotice(payload));
+      if (roleRef.current === "passenger") showOnce(`offer:${payload?.orderId}:${payload?.offerId}`, newOfferNotice(payload));
     };
     const onStatus = (payload) => {
       if (payload?.scope !== "order") return;
       const me = String(userRef.current ?? "");
       const isParticipant =
         String(payload?.passengerId) === me || String(payload?.driverId) === me;
-      if (isParticipant) show(orderStatusNotice(payload));
+      if (isParticipant) showOnce(`status:${payload?.orderId}:${payload?.status}`, orderStatusNotice(payload));
     };
 
     const onMessage = (payload) => {

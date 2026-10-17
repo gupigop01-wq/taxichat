@@ -89,7 +89,7 @@ const OrderChat = ({ orderId, me, onBack, startCall }) => {
     };
     socketListen("chat:message", onChanged);
     socketListen("order:status", onChanged);
-    socketListen("order:offer", onChanged);
+    socketListen("order:offersChanged", onChanged);
 
     // Join the live order room. The server refuses non-participants, so the
     // join is retried after the driver is assigned (order:status) and after
@@ -101,7 +101,7 @@ const OrderChat = ({ orderId, me, onBack, startCall }) => {
     return () => {
       socket.off("chat:message", onChanged);
       socket.off("order:status", onChanged);
-      socket.off("order:offer", onChanged);
+      socket.off("order:offersChanged", onChanged);
       socket.off("connect", joinRoom);
       socket.off("order:status", joinRoom);
       socket.emit("order:leave", { orderId });

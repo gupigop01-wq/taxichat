@@ -26,10 +26,12 @@ const TripsList = ({ cityId, me, onOpen }) => {
     socketListen("order:new", load);
     socketListen("order:status", load);
     socketListen("order:offer", load);
+    socketListen("order:offersChanged", load);
     return () => {
       socket.off("order:new", load);
       socket.off("order:status", load);
       socket.off("order:offer", load);
+      socket.off("order:offersChanged", load);
     };
   }, [cityId]);
 

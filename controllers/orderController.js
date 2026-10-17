@@ -582,8 +582,10 @@ exports.createOffer = [
 
     const profile = await DriverProfile.findOne({ userId: req.user._id });
 
-    // The passenger gets the offer on any page: in his personal room, and in
-    // the order room for an open order chat
+    // The passenger gets the offer on any page (personal room). Open order
+    // chats listen to order:offersChanged to refresh the offers list. The
+    // offer is NOT sent into the order room, so a passenger who has the order
+    // open does not receive two copies (and two notices) of the same offer.
     const offerPayload = {
       orderId: order._id,
       offerId: offer._id,
@@ -599,7 +601,7 @@ exports.createOffer = [
     };
     emitOrderEvents([
       { room: `user:${order.passengerId}`, event: "order:offer", payload: offerPayload },
-      { room: `order:${order._id}`, event: "order:offer", payload: offerPayload },
+      { room: `order:${order._id}`, event: "order:offersChanged", payload: { orderId: order._id } },
     ]);
 
     res.status(201).json({ status: "success", data: { offer } });
