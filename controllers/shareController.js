@@ -2,6 +2,7 @@ const crypto = require("crypto");
 const mongoose = require("mongoose");
 const Order = require("../models/Order");
 const DriverProfile = require("../models/DriverProfile");
+const Membership = require("../models/Membership");
 const ApiError = require("../utilities/errors");
 const catchAsyncError = require("../utilities/catchAsyncError");
 const { carCaption } = require("../utilities/drivers");
@@ -39,7 +40,15 @@ exports.viewSharedTrip = catchAsyncError(async (req, res) => {
 
   let driver = null;
   if (order.driverId) {
-    const profile = await DriverProfile.findOne({ userId: order.driverId });
+    // DriverProfile is keyed by the driver membership of the order city
+    const membership = await Membership.findOne({
+      userId: order.driverId,
+      cityId: order.cityId,
+      role: "driver",
+    }).select("_id");
+    const profile = membership
+      ? await DriverProfile.findOne({ membershipId: membership._id })
+      : null;
     if (profile) {
       driver = {
         displayName: profile.displayName,

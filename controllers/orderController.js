@@ -580,7 +580,8 @@ exports.createOffer = [
         etaMin: req.body.etaMin,
       }));
 
-    const profile = await DriverProfile.findOne({ userId: req.user._id });
+    // DriverProfile is keyed by membership, not by user
+    const profile = await DriverProfile.findOne({ membershipId: driverMembership._id });
 
     // The passenger gets the offer on any page (personal room). Open order
     // chats listen to order:offersChanged to refresh the offers list. The
@@ -768,6 +769,22 @@ exports.assignByDispatcher = [
     const order = await Order.findById(req.params.id);
     if (!order) throw new ApiError(404, "Заказ не найден");
 
+    // Only a dispatcher of the order city, a region admin of its region or
+    // the superadmin may assign a driver manually
+    const isCityDispatcher = (req.memberships ?? []).some(
+      (item) =>
+        item.role === "dispatcher" &&
+        item.status === "ACTIVE" &&
+        String(item.cityId?._id ?? item.cityId) === String(order.cityId)
+    );
+    const regionCityIds = await regionAdminCityIds(req);
+    const isRegionAdmin =
+      regionCityIds === null || regionCityIds.includes(String(order.cityId));
+    if (!isCityDispatcher && !isRegionAdmin)
+      throw new ApiError(403, "Назначать водителя может только диспетчер города");
+
+    if (!mongoose.isValidObjectId(req.body.membershipId))
+      throw new ApiError(400, "Водитель не найден в этом городе");
     const driverMembership = await Membership.findOne({
       _id: req.body.membershipId,
       cityId: order.cityId,

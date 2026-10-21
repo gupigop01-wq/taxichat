@@ -1,12 +1,21 @@
+const mongoose = require("mongoose");
 const ChatRoom = require("../models/ChatRoom");
 const User = require("../models/User");
 const catchAsyncError = require("../utilities/catchAsyncError");
 const ReqError = require("../utilities/ReqError");
 
+// True when the user is a member of the legacy chat room
+exports.isChatRoomMember = async (chatRoomId, userId) => {
+  if (!userId || !mongoose.isValidObjectId(chatRoomId)) return false;
+  return Boolean(await ChatRoom.exists({ _id: chatRoomId, members: userId }));
+};
+
 exports.createChatRoom = async (chatRoomDetails) =>
   await ChatRoom.create(chatRoomDetails);
 
 exports.getChatRoom = catchAsyncError(async (req, res, next) => {
+  if (!(await exports.isChatRoomMember(req.params.chatRoomId, req.user._id)))
+    return next(new ReqError(403, "Нет доступа к этому чату"));
   const chatRoom = await ChatRoom.findById(req.params.chatRoomId);
   if (!chatRoom) return next(new ReqError(400, "Chat does not exist"));
 

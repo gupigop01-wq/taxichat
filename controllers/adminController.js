@@ -238,6 +238,17 @@ exports.setUserBan = [
   if (user.isSuperadmin && !req.user.isSuperadmin)
     throw new ApiError(403, "Недостаточно прав");
 
+  // A region admin may only ban users of their own region: a membership in
+  // one of its cities or the home city there
+  if (!isSuperadmin(req)) {
+    const scope = await getRegionAdminCityScope(req);
+    const inRegion =
+      (user.homeCityId && scope.includes(String(user.homeCityId))) ||
+      (await Membership.exists({ userId: user._id, cityId: { $in: scope } }));
+    if (!inRegion)
+      throw new ApiError(403, "Пользователь не относится к вашему региону");
+  }
+
   const banned = req.body?.banned !== false;
   user.banned = banned;
   await user.save();

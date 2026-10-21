@@ -1,5 +1,6 @@
 const {
   checkMembersOffUndeliveredListInMessage,
+  isChatRoomMember,
 } = require("../controllers/chatRoomController");
 const User = require("../models/User");
 const Membership = require("../models/Membership");
@@ -120,7 +121,13 @@ exports.disconnectingController = (io, socket) => {
 };
 
 exports.joinRoomController = (io, socket) => {
-  socket.on("user:joinRooms", ({ rooms }) => {
-    socket.join(rooms);
+  // Only legacy chat rooms the verified user is a member of; system rooms
+  // (user:, city:, zone:, order:) are never joinable from the client
+  socket.on("user:joinRooms", async (payload) => {
+    if (!socket.userId) return;
+    const rooms = Array.isArray(payload?.rooms) ? payload.rooms : [];
+    for (const room of rooms) {
+      if (await isChatRoomMember(room, socket.userId)) socket.join(String(room));
+    }
   });
 };

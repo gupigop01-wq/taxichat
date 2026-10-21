@@ -4,6 +4,7 @@ const {
   addMessageAsUndeliveredToUser,
   addMessageAsUnreadToUser,
   markMessageAsReadByUser,
+  isChatRoomMember,
 } = require("../controllers/chatRoomController");
 
 // Sliding-window flood guard: max 30 message packets per minute per socket
@@ -25,8 +26,14 @@ const allowMessage = (socket) => {
 };
 
 exports.messagingController = (io, socket) => {
-  socket.on("user:message", async ({ chatRoomId, message }) => {
-    if (!socket.userId) return;
+  socket.on("user:message", async (payload) => {
+    const chatRoomId = payload?.chatRoomId;
+    const message = payload?.message;
+    if (!message || typeof message !== "object") return;
+    if (!(await isChatRoomMember(chatRoomId, socket.userId))) {
+      socket.emit("chat:error", { error: "Нет доступа к этому чату" });
+      return;
+    }
 
     if (!allowMessage(socket)) {
       socket.emit("chat:error", {
@@ -112,8 +119,8 @@ exports.messagingController = (io, socket) => {
 exports.markMessageReadController = (io, socket) => {
   socket.on(
     "user:messageRead",
-    async ({ messageId, chatRoomId, day }) => {
-      if (!socket.userId) return;
+    async ({ messageId, chatRoomId, day } = {}) => {
+      if (!(await isChatRoomMember(chatRoomId, socket.userId))) return;
       await markMessageAsReadByUser({
         messageId,
         chatRoomId,
@@ -126,8 +133,9 @@ exports.markMessageReadController = (io, socket) => {
 
   socket.on(
     "user:markMessagesAsRead",
-    async ({ messages, chatRoomId }) => {
-      if (!socket.userId) return;
+    async ({ messages, chatRoomId } = {}) => {
+      if (!Array.isArray(messages)) return;
+      if (!(await isChatRoomMember(chatRoomId, socket.userId))) return;
       for (let { messageId, day } of messages) {
         await markMessageAsReadByUser({
           messageId,
