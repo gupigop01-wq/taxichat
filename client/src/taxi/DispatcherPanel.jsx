@@ -6,6 +6,7 @@ import { useDispatch } from "react-redux";
 import { notificationActions } from "../store/notificationSlice";
 import useSocket from "../hooks/useSocket";
 import OrderChat from "./OrderChat";
+import { IconText } from "./TaxiIcon";
 
 // Dispatcher panel: city order queue, manual assignment, driver applications
 // review and the region admin sections (concept 1.3 / 1.9)
@@ -17,9 +18,11 @@ const DispatcherPanel = ({ cityId, role, me }) => {
   const [pending, setPending] = useState([]);
   const [activeDrivers, setActiveDrivers] = useState([]);
   const [error, setError] = useState(null);
-  const [sos, setSos] = useState(null);
+  const [sos, setSos] = useState([]);
   const [view, setView] = useState(null);
-  const [adminTab, setAdminTab] = useState(null);
+  const [adminTab, setAdminTab] = useState("applications");
+  const [assigning, setAssigning] = useState({});
+  const [assignPending, setAssignPending] = useState(null);
   const [applications, setApplications] = useState([]);
   const [complaints, setComplaints] = useState([]);
   const [audit, setAudit] = useState([]);
@@ -64,8 +67,8 @@ const DispatcherPanel = ({ cityId, role, me }) => {
     load();
     const onChanged = () => load();
     const onSos = (payload) => {
-      setSos(payload);
-      setTimeout(() => setSos(null), 15000);
+      setSos((current) => current.some((item) => String(item.orderId) === String(payload.orderId))
+        ? current : [payload, ...current]);
     };
     socketListen("order:new", onChanged);
     socketListen("order:status", onChanged);
@@ -86,8 +89,19 @@ const DispatcherPanel = ({ cityId, role, me }) => {
   }
 
   const assign = async (orderId, membershipId) => {
+    const order = orders.find((item) => item._id === orderId);
+    const driver = activeDrivers.find((item) => item._id === membershipId);
+    if (!order || !driver) return;
+    const approved = await confirm({
+      title: "Назначить водителя?",
+      text: `${driver.displayName} (${driver.carCaption}) · ${order.from?.text ?? "Откуда"} → ${order.to?.text ?? "Куда"}`,
+      okText: "Назначить",
+    });
+    if (!approved) return;
     try {
+      setAssignPending(orderId);
       await apiPost(`/api/orders/${orderId}/assign`, { membershipId });
+      setAssigning((current) => ({ ...current, [orderId]: "" }));
       dispatch(
         notificationActions.addNotification({
           message: "Водитель назначен на заказ",
@@ -97,6 +111,8 @@ const DispatcherPanel = ({ cityId, role, me }) => {
       load();
     } catch (err) {
       setError(err.message);
+    } finally {
+      setAssignPending(null);
     }
   };
 
@@ -104,20 +120,20 @@ const DispatcherPanel = ({ cityId, role, me }) => {
     try {
       let reason;
       if (decision === "reject") {
-        reason = await ask({ title: "❌ Причина отказа", placeholder: "Коротко, почему", okText: "Отклонить", danger: true });
+        reason = await ask({ title: "Причина отказа", placeholder: "Коротко, почему", okText: "Отклонить", danger: true });
         if (!reason) return;
       }
-await apiPatch(`/api/dispatch/drivers/${membershipId}`, { decision, reason });
-        dispatch(
-          notificationActions.addNotification({
-            message:
-              decision === "approve"
-                ? "Водитель одобрен"
-                : "Анкета отклонена",
-            type: decision === "approve" ? "success" : "info",
-          })
-        );
-        load();
+      await apiPatch(`/api/dispatch/drivers/${membershipId}`, { decision, reason });
+      dispatch(
+        notificationActions.addNotification({
+          message:
+            decision === "approve"
+              ? "Водитель одобрен"
+              : "Анкета отклонена",
+          type: decision === "approve" ? "success" : "info",
+        })
+      );
+      load();
     } catch (err) {
       setError(err.message);
     }
@@ -127,7 +143,7 @@ await apiPatch(`/api/dispatch/drivers/${membershipId}`, { decision, reason });
     try {
       let reason;
       if (decision === "reject") {
-        reason = await ask({ title: "❌ Причина отказа", placeholder: "Коротко, почему", okText: "Отклонить", danger: true });
+        reason = await ask({ title: "Причина отказа", placeholder: "Коротко, почему", okText: "Отклонить", danger: true });
         if (!reason) return;
       }
       await apiPatch(`/api/admin/applications/${applicationId}`, { decision, reason });
@@ -139,7 +155,8 @@ await apiPatch(`/api/dispatch/drivers/${membershipId}`, { decision, reason });
 
   const resolveComplaint = async (complaintId, status) => {
     try {
-      const resolution = await ask({ title: "📝 Решение по жалобе", placeholder: "Что сделано", okText: "Сохранить" });
+      const resolution = await ask({ title: "Решение по жалобе", placeholder: "Что сделано", okText: "Сохранить" });
+      if (!resolution || !resolution.trim()) return;
       await apiPatch(`/api/admin/complaints/${complaintId}`, { status, resolution });
       loadAdmin("complaints");
     } catch (err) {
@@ -147,116 +164,89 @@ await apiPatch(`/api/dispatch/drivers/${membershipId}`, { decision, reason });
     }
   };
 
-  const OPEN = ["PUBLISHED", "ASSIGNED", "ARRIVING", "WAITING", "IN_RIDE", "DISPUTE"];
+  // Working queue: what needs a dispatcher decision first, then live rides.
+  const needsAction = orders
+    .filter((order) => order.status === "DISPUTE" || order.status === "PUBLISHED")
+    .sort((a, b) => (a.status === "DISPUTE" ? -1 : 1) - (b.status === "DISPUTE" ? -1 : 1)
+      || new Date(a.createdAt) - new Date(b.createdAt));
+  const inProgress = orders
+    .filter((order) => ["ASSIGNED", "ARRIVING", "WAITING", "IN_RIDE"].includes(order.status))
+    .sort((a, b) => new Date(a.createdAt) - new Date(b.createdAt));
+
+  const orderRouteTitle = (order) =>
+    order.to?.text ? `${order.from?.text} → ${order.to?.text}` : order.from?.text;
+
+  const queueCard = (order) => (
+    <div key={order._id} className={`glass rounded-2xl p-4 text-sm ${order.status === "DISPUTE" ? "border border-danger" : order.status === "PUBLISHED" ? "border border-accent/50" : ""}`}>
+      <div className="flex items-start gap-2 min-w-0">
+        <div className="font-semibold min-w-0 break-words">{orderRouteTitle(order)}</div>
+        {order.unreadCount > 0 && (
+          <span className="ml-auto bg-danger text-white rounded-full px-2 text-xs shrink-0">
+            {order.unreadCount}
+          </span>
+        )}
+      </div>
+      <div className="text-secondary-text mt-1">
+          <IconText>{statusBadge(order.status)}</IconText> · <IconText>{formatWhen(order.when)}</IconText> · {order.pax} пасс.
+      </div>
+      {order.driver?.displayName && <div className="text-secondary-text mt-1">Водитель: {order.driver.displayName}</div>}
+      <div className="flex gap-2 mt-3 items-center flex-wrap">
+        {order.status === "PUBLISHED" && (
+          <>
+            <label className="sr-only" htmlFor={`assign-${order._id}`}>Водитель для заказа</label>
+            <select id={`assign-${order._id}`} className="bg-primary p-2 rounded-xl text-sm max-w-full"
+              value={assigning[order._id] ?? ""} onChange={(event) => setAssigning((current) => ({ ...current, [order._id]: event.target.value }))}>
+              <option value="">Выберите водителя</option>
+              {activeDrivers.map((driver) => (
+                <option key={driver._id} value={driver._id}>{driver.displayName} ({driver.carCaption})</option>
+              ))}
+            </select>
+            <button className="btn-accent press px-3 py-2 rounded-xl font-semibold disabled:opacity-50"
+              disabled={!assigning[order._id] || assignPending === order._id}
+              onClick={() => assign(order._id, assigning[order._id])}>
+              {assignPending === order._id ? "Назначаем…" : "Подтвердить назначение"}
+            </button>
+          </>
+        )}
+        <button className="underline" onClick={() => setView(order._id)}>
+          Открыть заказ
+        </button>
+      </div>
+    </div>
+  );
 
   return (
     <div className="p-4 space-y-4 overflow-y-auto h-full max-w-[42rem] mx-auto w-full">
-      {sos && (
-        <div className="bg-danger text-white rounded p-3 text-sm flex items-center gap-3">
-          <span>SOS в заказе! Подключитесь к чату.</span>
-          <button
-            className="bg-white text-danger px-3 py-1 rounded font-semibold"
-            onClick={() => setView(sos.orderId)}
-          >
-            Открыть чат
-          </button>
+      {sos.length > 0 && (
+        <div className="bg-danger text-white rounded-2xl p-4 space-y-2" role="alert">
+          <h3 className="font-display font-bold">SOS · {sos.length}</h3>
+          {sos.map((item) => (
+            <div key={item.orderId} className="flex items-center gap-3 flex-wrap justify-between">
+              <span>Сигнал по заказу {orders.find((order) => String(order._id) === String(item.orderId))?.from?.text ?? String(item.orderId)}</span>
+              <button className="bg-white text-danger px-3 py-2 rounded-xl font-semibold" onClick={() => setView(item.orderId)}>Открыть чат</button>
+            </div>
+          ))}
+          <p className="text-xs">Сигналы остаются до обновления страницы. Статус жалоб проверяйте во вкладке администратора.</p>
         </div>
       )}
       {error && <div className="text-danger text-sm">{error}</div>}
 
-      <div>
-        <h3 className="font-display font-bold mb-2 text-center tracking-wide">Очередь города</h3>
-        <div className="space-y-2 max-w-lg">
-          {orders.filter((order) => OPEN.includes(order.status)).length === 0 && (
-            <div className="text-sm text-secondary-text">Активных заказов нет</div>
-          )}
-          {orders
-            .filter((order) => OPEN.includes(order.status))
-            .map((order) => (
-              <div key={order._id} className="glass anim-rise rounded-2xl p-3 text-sm text-center">
-                <div className="flex items-center gap-2">
-                <div className="font-semibold text-center">
-                  {order.to?.text ? `${order.from?.text} → ${order.to?.text}` : order.from?.text}
-                </div>
-                  {order.unreadCount > 0 && (
-                    <span className="ml-auto bg-danger text-white rounded-full px-2 text-xs">
-                      {order.unreadCount}
-                    </span>
-                  )}
-                </div>
-                <div className="text-secondary-text text-center">
-                  {statusBadge(order.status)} · {formatWhen(order.when)} · {order.pax} пасс.
-                </div>
-                <div className="flex gap-2 mt-2">
-                  {order.status === "PUBLISHED" && (
-                    <select
-                      className="bg-primary p-2 rounded text-sm"
-                      defaultValue=""
-                      onChange={(event) =>
-                        event.target.value && assign(order._id, event.target.value)
-                      }
-                    >
-                      <option value="">Назначить водителя...</option>
-                      {activeDrivers.map((driver) => (
-                        <option key={driver._id} value={driver._id}>
-                          {driver.displayName} ({driver.carCaption})
-                        </option>
-                      ))}
-                    </select>
-                  )}
-<button className="underline" onClick={() => setView(order._id)}>
-                    Открыть заказ
-                  </button>
-                </div>
-              </div>
-            ))}
-        </div>
-      </div>
-
-      <div>
-        <h3 className="font-display font-bold mb-2 text-center tracking-wide">Анкеты водителей</h3>
-        <div className="space-y-2 max-w-lg">
-          {pending.length === 0 && (
-            <div className="text-sm text-secondary-text">Новых анкет нет</div>
-          )}
-          {pending.map((driver) => (
-            <div key={driver._id} className="glass anim-rise rounded-2xl p-3 text-sm text-center">
-              <div className="font-semibold text-center">{driver.displayName}</div>
-              <div className="text-secondary-text text-center">
-                {driver.carCaption} · {driver.user?.name}
-              </div>
-              <div className="flex gap-2 mt-2">
-                <button
-                  className="bg-success text-white px-3 py-1 rounded"
-                  onClick={() => review(driver._id, "approve")}
-                >
-                  Одобрить
-                </button>
-                <button
-                  className="bg-danger text-white px-3 py-1 rounded"
-                  onClick={() => review(driver._id, "reject")}
-                >
-                  Отклонить
-                </button>
-              </div>
-            </div>
-          ))}
-        </div>
-      </div>
-
+      {/* Заявки на диспетчера и управление регионом — наверху, под SOS */}
       {isRegionAdmin && (
         <div>
-          <h3 className="font-display font-bold mb-2 text-center tracking-wide">Админ региона</h3>
-          <div className="flex gap-2 text-sm mb-2">
+          <h3 className="font-display font-bold mb-2 tracking-wide">Управление регионом</h3>
+          <div className="flex gap-2 flex-wrap text-sm mb-3" role="tablist" aria-label="Управление регионом">
             {[
-              ["applications", "Заявки на диспетчера"],
-              ["complaints", "Жалобы и SOS"],
+              ["applications", `Заявки · ${applications.length}`],
+              ["complaints", `Жалобы · ${complaints.length}`],
               ["audit", "Журнал"],
             ].map(([key, label]) => (
               <button
                 key={key}
-                className={`px-2 py-1 rounded ${adminTab === key ? "bg-accent text-black" : "bg-secondary"}`}
-                onClick={() => setAdminTab(adminTab === key ? null : key)}
+                role="tab" aria-selected={adminTab === key}
+                className={`px-3 py-2 rounded-xl ${adminTab === key ? "bg-accent text-black" : "bg-secondary"}`}
+                onClick={() => setAdminTab(key)}
+                aria-controls={`admin-panel-${key}`}
               >
                 {label}
               </button>
@@ -264,17 +254,17 @@ await apiPatch(`/api/dispatch/drivers/${membershipId}`, { decision, reason });
           </div>
 
           {adminTab === "applications" && (
-            <div className="space-y-2 max-w-lg">
+            <div id="admin-panel-applications" role="tabpanel" className="space-y-2 max-w-lg">
               {applications.length === 0 && (
                 <div className="text-sm text-secondary-text">Заявок нет</div>
               )}
               {applications.map((application) => (
-                <div key={application._id} className="glass anim-rise rounded-2xl p-3 text-sm text-center">
+                <div key={application._id} className="glass rounded-2xl p-3 text-sm text-center">
                   <div className="font-semibold text-center">
                     {application.userId?.name} → {application.cityId?.name}
                   </div>
                   {application.note && (
-                    <div className="text-secondary-text text-center">{application.note}</div>
+                    <div className="text-secondary-text text-center break-words">{application.note}</div>
                   )}
                   <div className="flex gap-2 mt-2">
                     <button
@@ -296,17 +286,17 @@ await apiPatch(`/api/dispatch/drivers/${membershipId}`, { decision, reason });
           )}
 
           {adminTab === "complaints" && (
-            <div className="space-y-2 max-w-lg">
+            <div id="admin-panel-complaints" role="tabpanel" className="space-y-2 max-w-lg">
               {complaints.length === 0 && (
                 <div className="text-sm text-secondary-text">Открытых жалоб нет</div>
               )}
               {complaints.map((complaint) => (
-                <div key={complaint._id} className="glass anim-rise rounded-2xl p-3 text-sm text-center">
+                <div key={complaint._id} className="glass rounded-2xl p-3 text-sm text-center">
                   <div className="font-semibold text-center">
                     {complaint.type === "sos" ? "SOS" : "Жалоба"} ·{" "}
                     {complaint.reporterId?.name}
                   </div>
-                  <div>{complaint.text}</div>
+                  <div className="break-words">{complaint.text}</div>
                   <div className="flex gap-2 mt-2">
                     <button
                       className="bg-success text-white px-3 py-1 rounded"
@@ -327,7 +317,7 @@ await apiPatch(`/api/dispatch/drivers/${membershipId}`, { decision, reason });
           )}
 
           {adminTab === "audit" && (
-            <div className="space-y-1 max-w-lg text-sm">
+            <div id="admin-panel-audit" role="tabpanel" className="space-y-1 max-w-lg text-sm">
               {audit.map((entry) => (
                 <div key={entry._id} className="text-secondary-text text-center">
                   {new Date(entry.at).toLocaleString()} · {entry.action} ·{" "}
@@ -338,6 +328,54 @@ await apiPatch(`/api/dispatch/drivers/${membershipId}`, { decision, reason });
           )}
         </div>
       )}
+
+      {/* Что требует решения: споры + неназначенные; сюда же анкеты водителей */}
+      <div>
+        <h3 className="font-display font-bold mb-2 tracking-wide">Требуют действий · {needsAction.length + pending.length}</h3>
+        {pending.length > 0 && (
+          <div className="space-y-2 mb-3">
+            {pending.map((driver) => (
+              <div key={driver._id} className="glass rounded-2xl p-3 text-sm">
+                <div className="font-semibold break-words">Анкета: {driver.displayName}</div>
+                <div className="text-secondary-text break-words">
+                  {driver.carCaption} · {driver.user?.name}
+                </div>
+                <div className="flex gap-2 mt-2">
+                  <button
+                    className="bg-success text-white px-3 py-1 rounded"
+                    onClick={() => review(driver._id, "approve")}
+                  >
+                    Одобрить
+                  </button>
+                  <button
+                    className="bg-danger text-white px-3 py-1 rounded"
+                    onClick={() => review(driver._id, "reject")}
+                  >
+                    Отклонить
+                  </button>
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+        <div className="space-y-2">
+          {needsAction.length === 0 && pending.length === 0 && (
+            <div className="text-sm text-secondary-text">Всё обработано — заказов без решения нет</div>
+          )}
+          {needsAction.map(queueCard)}
+        </div>
+      </div>
+
+      {/* Активные поездки: назначены и едут */}
+      <div>
+        <h3 className="font-display font-bold mb-2 tracking-wide">Активные поездки · {inProgress.length}</h3>
+        <div className="space-y-2">
+          {inProgress.length === 0 && (
+            <div className="text-sm text-secondary-text">Активных поездок нет</div>
+          )}
+          {inProgress.map(queueCard)}
+        </div>
+      </div>
     </div>
   );
 };

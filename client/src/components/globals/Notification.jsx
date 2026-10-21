@@ -3,6 +3,7 @@ import { useDispatch, useSelector } from "react-redux";
 import { notificationActions } from "../../store/notificationSlice";
 import { apiPost } from "../../taxi/api";
 import { motion, AnimatePresence } from "framer-motion";
+import TaxiIcon, { IconText } from "../../taxi/TaxiIcon";
 
 // Auto-dismiss: every notification leaves on its own after this delay
 const LIFETIME_MS = 60 * 1000;
@@ -127,12 +128,12 @@ function NotificationItem({ item, onDismiss }) {
         exit={{ opacity: 0 }}
         className="glass-strong w-full min-w-0 rounded-2xl p-3 space-y-2 border-l-[3px] border-l-cta-icon text-[1.4rem]"
       >
-        <div className="font-display font-bold text-[1.5rem]">🚕 Отклик водителя</div>
+        <div className="font-display font-bold text-[1.5rem]"><TaxiIcon name="driver" className="inline-block align-[-0.2em]" /> Отклик водителя</div>
         <div className="space-y-0.5">
-          <div>💰 Цена: <b>{priceText}</b></div>
-          <div>⏱ Подача через: <b>{etaMin} мин</b></div>
-          <div className="break-words">🧑‍✈️ {driverName ?? "Водитель"}</div>
-          {carCaption && <div className="break-words">🚗 {carCaption}</div>}
+          <div><TaxiIcon name="cash" className="inline-block align-[-0.2em]" /> Цена: <b>{priceText}</b></div>
+          <div><TaxiIcon name="eta" className="inline-block align-[-0.2em]" /> Подача через: <b>{etaMin} мин</b></div>
+          <div className="break-words"><TaxiIcon name="driver" className="inline-block align-[-0.2em]" /> {driverName ?? "Водитель"}</div>
+          {carCaption && <div className="break-words"><TaxiIcon name="road" className="inline-block align-[-0.2em]" /> {carCaption}</div>}
         </div>
         <div className="grid grid-cols-2 gap-2">
           <button onClick={() => onDismiss(item.id)} className="rounded-xl py-2 bg-white/10 border border-white/10">
@@ -156,7 +157,7 @@ function NotificationItem({ item, onDismiss }) {
         item.type === "error" ? "border-l-danger" : "border-l-cta-icon"
       }`}
     >
-      <span className="flex-1 min-w-0 break-words">{item.message}</span>
+      <span className="flex-1 min-w-0 break-words"><IconText>{item.message}</IconText></span>
       {item.orderId && (
         <button className="shrink-0 rounded-xl px-2 py-1 btn-accent text-[1.3rem] font-bold" onClick={openOrder}>
           Открыть
@@ -167,7 +168,7 @@ function NotificationItem({ item, onDismiss }) {
         className="shrink-0 w-[3rem] h-[3rem] flex items-center justify-center rounded-full text-secondary-text"
         aria-label="Закрыть"
       >
-        ✖️
+        <TaxiIcon name="close" />
       </button>
     </motion.div>
   );

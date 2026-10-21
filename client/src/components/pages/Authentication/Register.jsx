@@ -6,6 +6,7 @@ import useFetch from "../../../hooks/useFetch";
 import { useDispatch } from "react-redux";
 import { authActions } from "../../../store/authSlice";
 import Spinner from "../../globals/Spinner";
+import { IconText } from "../../../taxi/TaxiIcon";
 
 const schema = Yup.object().shape({
   name: Yup.string()
@@ -24,6 +25,7 @@ const schema = Yup.object().shape({
 
 function Register({ setUserWantsToLogin }) {
   const dispatch = useDispatch();
+  const [formError, setFormError] = useState(null);
   const [cities, setCities] = useState([]);
   const [cityMode, setCityMode] = useState("pick"); // pick | custom
 
@@ -31,7 +33,7 @@ function Register({ setUserWantsToLogin }) {
     fetch("/api/geo/cities", { credentials: "include" })
       .then((res) => res.json())
       .then((data) => setCities(data.data?.cities ?? []))
-      .catch(() => {});
+      .catch(() => setCities([]));
   }, []);
 
   // Register user
@@ -39,7 +41,8 @@ function Register({ setUserWantsToLogin }) {
     { url: "/user/register", method: "POST" },
     () => {
       dispatch(authActions.login());
-    }
+    },
+    (error) => setFormError(error?.message ?? "Не удалось создать аккаунт")
   );
 
   return (
@@ -52,7 +55,7 @@ function Register({ setUserWantsToLogin }) {
       </div>
 
       <div className="glass-strong rounded-3xl p-5 space-y-4">
-        <div className="text-center font-display font-bold text-[1.6rem]">🪪 Регистрация</div>
+         <div className="text-center font-display font-bold text-[1.6rem]"><IconText>🪪 Регистрация</IconText></div>
       <Formik
         initialValues={{
           name: "",
@@ -64,6 +67,7 @@ function Register({ setUserWantsToLogin }) {
         }}
         validationSchema={schema}
         onSubmit={(values) => {
+          setFormError(null);
           const payload = {
             name: values.name,
             username: values.username,
@@ -78,12 +82,16 @@ function Register({ setUserWantsToLogin }) {
       >
         {({ errors, values, setFieldValue }) => (
           <Form className="flex flex-col gap-[1.5rem]" autoComplete="off">
+            {formError && (
+              <div role="alert" className="text-[1.3rem] text-danger text-center bg-danger/10 border border-danger/40 rounded-xl py-2 px-3">
+                {formError}
+              </div>
+            )}
             <FormField
                 center={true}
+              persistentLabel
               labelName="Имя"
-              labelClassName={`bg-transparent group-focus-within:hidden ${
-                values.name && "hidden"
-              }`}
+              labelClassName="bg-[#171717]"
               name="name"
               required={true}
               value={values.name}
@@ -92,10 +100,9 @@ function Register({ setUserWantsToLogin }) {
 
             <FormField
                 center={true}
+              persistentLabel
               labelName="Логин"
-              labelClassName={`bg-transparent group-focus-within:hidden ${
-                values.username && "hidden"
-              }`}
+              labelClassName="bg-[#171717]"
               name="username"
               required={true}
               value={values.username}
@@ -104,10 +111,9 @@ function Register({ setUserWantsToLogin }) {
 
             <FormField
                 center={true}
+              persistentLabel
               labelName="Пароль"
-              labelClassName={`bg-transparent group-focus-within:hidden ${
-                values.password && "hidden"
-              }`}
+              labelClassName="bg-[#171717]"
               name="password"
               required={true}
               value={values.password}
@@ -117,10 +123,9 @@ function Register({ setUserWantsToLogin }) {
 
             <FormField
                 center={true}
+              persistentLabel
               labelName="Повторите пароль"
-              labelClassName={`bg-transparent group-focus-within:hidden ${
-                values.confirmPassword && "hidden"
-              }`}
+              labelClassName="bg-[#171717]"
               name="confirmPassword"
               required={true}
               value={values.confirmPassword}
@@ -128,9 +133,10 @@ function Register({ setUserWantsToLogin }) {
               fieldType="password"
             />
 
-            <div className="flex gap-2 justify-center text-sm">
+            <div className="flex flex-wrap gap-2 justify-center text-sm" role="group" aria-label="Способ выбора города">
               <button
                 type="button"
+                aria-pressed={cityMode === "pick"}
                 className={`press px-3 py-1.5 rounded-xl ${
                   cityMode === "pick" ? "btn-accent font-semibold" : "glass text-secondary-text"
                 }`}
@@ -140,6 +146,7 @@ function Register({ setUserWantsToLogin }) {
               </button>
               <button
                 type="button"
+                aria-pressed={cityMode === "custom"}
                 className={`press px-3 py-1.5 rounded-xl ${
                   cityMode === "custom" ? "btn-accent font-semibold" : "glass text-secondary-text"
                 }`}
@@ -150,7 +157,10 @@ function Register({ setUserWantsToLogin }) {
             </div>
 
             {cityMode === "pick" ? (
+              <div>
+              <label htmlFor="cityId" className="block text-secondary-text text-sm mb-1">Город</label>
               <select
+                id="cityId"
                 className="w-full bg-[#0d0d0d] text-white border border-secondary-text/30 rounded-2xl p-3 text-[1.5rem] focus:border-accent focus:outline-none"
                 name="cityId"
                 value={values.cityId}
@@ -163,13 +173,13 @@ function Register({ setUserWantsToLogin }) {
                   </option>
                 ))}
               </select>
+              </div>
             ) : (
               <FormField
                 center={true}
+                persistentLabel
                 labelName="Ваш город"
-                labelClassName={`bg-transparent group-focus-within:hidden ${
-                  values.newCityName && "hidden"
-                }`}
+                labelClassName="bg-[#171717]"
                 name="newCityName"
                 value={values.newCityName}
                 error={errors.newCityName}
@@ -184,6 +194,8 @@ function Register({ setUserWantsToLogin }) {
                   : "opacity-100"
               }`}
               type="submit"
+              disabled={reqState === "loading" || (cityMode === "pick" ? !values.cityId : !values.newCityName)}
+              aria-busy={reqState === "loading"}
             >
               {reqState !== "loading" && "Создать аккаунт"}
               {reqState === "loading" && (

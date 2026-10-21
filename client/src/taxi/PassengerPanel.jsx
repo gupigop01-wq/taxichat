@@ -9,6 +9,7 @@ import ChatList from "./ChatList";
 import AddressInput from "./AddressInput";
 import TimePicker from "./TimePicker";
 import { statusBadge, formatWhen, defaultScheduledAt } from "./statusLabels";
+import TaxiIcon, { IconText } from "./TaxiIcon";
 
 // Passenger panel, mobile-first: the order composer sits at the BOTTOM of the
 // screen like a messenger input; recent orders fill the scrollable area above.
@@ -146,7 +147,7 @@ const PassengerPanel = ({ me, cityId, cityName, cityNames, refreshMe, startCall 
     <div key={driver.driverId} className="glass anim-rise rounded-2xl p-3 text-sm text-center">
       <div className="font-semibold text-center">{driver.displayName}</div>
       <div className="text-secondary-text">{driver.carCaption}</div>
-      {driver.rating != null && <div>★ {driver.rating}</div>}
+       {driver.rating != null && <div><TaxiIcon name="starFilled" className="inline-block align-[-0.2em]" /> {driver.rating}</div>}
       {extra.children}
     </div>
   );
@@ -157,19 +158,26 @@ const PassengerPanel = ({ me, cityId, cityName, cityNames, refreshMe, startCall 
   const orderCard = (order) => (
     <button
       key={order._id}
-      className="press anim-rise w-full text-center glass rounded-2xl p-4 text-[1.5rem]"
+      className="press w-full text-left glass rounded-2xl p-4 text-[1.5rem]"
       onClick={() => setView({ type: "order", id: order._id })}
+      aria-label={`Открыть заказ: ${routeTitle(order)}, ${order.status}`}
     >
-      <div className="flex items-center gap-2 justify-center">
-        <div className="order-card-title min-w-0 text-center">{routeTitle(order)}</div>
+      <div className="flex items-start gap-2">
+        <div className="order-card-title min-w-0 break-words">{routeTitle(order)}</div>
         {order.unreadCount > 0 && (
-          <span className="ml-auto bg-danger text-white rounded-full px-2 text-xs shrink-0">
+          <span className="ml-auto bg-danger text-white rounded-full px-2 text-xs shrink-0" aria-label={`Новых сообщений: ${order.unreadCount}`}>
             {order.unreadCount}
           </span>
         )}
       </div>
-<div className="text-secondary-text">
-        {statusBadge(order.status)} · {formatWhen(order.when)}
+      {order.driver?.displayName && (
+        <div className="text-[1.3rem] text-primary-text">
+          <IconText>🚕</IconText> {order.driver.displayName}
+          {order.driver.carCaption ? ` · ${order.driver.carCaption}` : ""}
+        </div>
+      )}
+<div className="text-secondary-text mt-1">
+         <IconText>{statusBadge(order.status)}</IconText> · {formatWhen(order.when)}
       </div>
       <div className="mt-1 text-cta-icon text-[1.2rem] font-semibold">Открыть заказ →</div>
     </button>
@@ -181,7 +189,7 @@ const PassengerPanel = ({ me, cityId, cityName, cityNames, refreshMe, startCall 
   return (
     <div className="flex flex-col h-full max-w-[42rem] mx-auto w-full">
       {/* Табы */}
-      <div className="shrink-0 px-4 pt-3 pb-2 flex gap-2 text-sm flex-wrap justify-center">
+      <div className="taxi-subnav shrink-0 px-3 pt-3 pb-2 flex gap-2 text-sm overflow-x-auto hide-scrollbar">
         {[
           ["new", "🚕 Заказ"],
           ["orders", "📋 Мои заказы"],
@@ -191,12 +199,13 @@ const PassengerPanel = ({ me, cityId, cityName, cityNames, refreshMe, startCall 
         ].map(([key, label]) => (
           <button
             key={key}
-            className={`px-3 py-1.5 rounded-full ${
-              tab === key ? "bg-accent text-black font-semibold" : "bg-secondary text-secondary-text"
+            className={`taxi-subtab press ${
+              tab === key ? "is-active" : ""
             }`}
+            aria-current={tab === key ? "page" : undefined}
             onClick={() => setTab(key)}
           >
-            {label}
+             <IconText>{label}</IconText>
           </button>
         ))}
       </div>
@@ -204,7 +213,7 @@ const PassengerPanel = ({ me, cityId, cityName, cityNames, refreshMe, startCall 
       {error && <div className="shrink-0 text-danger text-sm text-center px-4">{error}</div>}
 
       {/* Прокручиваемая область */}
-      <div className="flex-1 overflow-y-auto px-4 pb-4 space-y-2">
+      <div key={tab} className="taxi-panel-enter flex-1 overflow-y-auto px-4 pb-4 space-y-2">
         {tab === "new" && (
           <>
             {activeOrders.length > 0 ? (
@@ -214,7 +223,7 @@ const PassengerPanel = ({ me, cityId, cityName, cityNames, refreshMe, startCall 
               </>
             ) : (
               <div className="h-full flex flex-col items-center justify-center text-center gap-2 py-10">
-                <div className="text-[3rem]">🚕</div>
+                 <TaxiIcon name="route" size={36} className="text-cta-icon" />
                 <div className="text-secondary-text text-sm">
                   Напишите маршрут ниже — водители города получат заказ
                 </div>
@@ -271,7 +280,7 @@ const PassengerPanel = ({ me, cityId, cityName, cityNames, refreshMe, startCall 
                       className="border border-secondary-text/40 px-3 py-2 rounded-lg"
                       onClick={() => toggleFavorite(driver)}
                     >
-                      {driver.isFavorite ? "★ В избранных" : "☆ В избранные"}
+                       <IconText>{driver.isFavorite ? "★ В избранных" : "☆ В избранные"}</IconText>
                     </button>
                   </div>
                 ),
@@ -330,7 +339,7 @@ const PassengerPanel = ({ me, cityId, cityName, cityNames, refreshMe, startCall 
                 }`}
                 onClick={() => setWhenType(key)}
               >
-                {label}
+                 <IconText>{label}</IconText>
               </button>
             ))}
           </div>
@@ -342,7 +351,7 @@ const PassengerPanel = ({ me, cityId, cityName, cityNames, refreshMe, startCall 
               onClick={() => setTimeOpen(true)}
             >
               <span className="flex items-center gap-2">
-                <span aria-hidden>🕓</span>
+                 <TaxiIcon name="clock" />
                 <span>
                   {(whenAt.split("T")[1] ?? "")} ·{" "}
                   {new Date(whenAt).toLocaleDateString("ru-RU", { day: "numeric", month: "long" })}
@@ -356,34 +365,48 @@ const PassengerPanel = ({ me, cityId, cityName, cityNames, refreshMe, startCall 
             value={route}
             onChange={setRoute}
             onEnter={submit}
+            label="Маршрут"
             placeholder="Куда едем? Например: от ЖД до Центра"
             cityName={cityName}
             cities={cityNames}
             listId="route-suggestions"
           />
 
-          <input
-            className="w-full bg-[#0d0d0d] text-white placeholder:text-secondary-text border border-secondary-text/30 rounded-2xl p-2.5 focus:border-accent focus:outline-none transition-colors text-[1.5rem] text-primary-text"
-            placeholder="Комментарий (необязательно)"
-            value={notes}
-            onChange={(event) => setNotes(event.target.value)}
-          />
+          {/* Комментарий + кнопка заказа — одна строка в стиле мессенджера:
+              при открытой клавиатуре всё помещается над ней */}
+          <label className="sr-only" htmlFor="taxi-order-notes">Комментарий водителю (необязательно)</label>
+          <div className="flex items-center gap-2 min-w-0">
+            <input
+              id="taxi-order-notes"
+              className="flex-1 min-w-0 bg-[#0d0d0d] text-white placeholder:text-secondary-text border border-secondary-text/30 rounded-2xl px-3 py-2.5 focus:border-accent focus:outline-none transition-colors text-[1.5rem] text-primary-text"
+              placeholder="Комментарий (необязательно)"
+              value={notes}
+              onChange={(event) => setNotes(event.target.value)}
+            />
+            <button
+              aria-label={
+                sending
+                  ? "Отправляем заказ"
+                  : whenType === "scheduled"
+                    ? "Заказать на время"
+                    : directTarget
+                      ? "Оформить заказ водителю"
+                      : "Заказать такси"
+              }
+              className={`press btn-accent shrink-0 w-[5.6rem] h-[5.6rem] rounded-full flex items-center justify-center ${
 
-          <button
-            className={`press btn-accent font-display font-extrabold tracking-wide p-[1rem] rounded-2xl w-full text-[1.4rem] ${
-              !route.trim() || sending ? "opacity-50" : "opacity-100 anim-pulse-ring"
-            }`}
-            type="submit"
-            disabled={!route.trim() || sending}
-          >
-            {sending
-              ? "Отправляем..."
-              : whenType === "scheduled"
-                ? "Заказать на время"
-                : directTarget
-                  ? "Оформить заказ водителю"
-                  : "Заказать такси"}
-          </button>
+                !route.trim() || sending ? "opacity-50" : "opacity-100 anim-pulse-ring"
+              }`}
+              type="submit"
+              disabled={!route.trim() || sending}
+            >
+              {sending ? (
+                <span className="text-[1.6rem] font-bold">…</span>
+              ) : (
+                <TaxiIcon name="send" size={30} />
+              )}
+            </button>
+          </div>
 </form>
       )}
 

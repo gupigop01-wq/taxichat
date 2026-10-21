@@ -3,6 +3,7 @@ import { apiGet, apiPost, apiPatch, apiDelete } from "./api";
 import useSocket, { reconnectSocket } from "../hooks/useSocket";
 
 const LAST_CITY_KEY = "bombila.lastCityId";
+const LAST_ROLE_PREFIX = "bombila.lastRole.";
 
 // Main city of the project: used as the default before the first manual pick
 const DEFAULT_CITY_NAME = "Слюдянка";
@@ -77,7 +78,9 @@ const useTaxi = () => {
     setCityIdState(pickInitialCity(cities, me.user?.homeCityId));
   }, [cities, me]);
 
-  // Auto-select the role for the chosen city
+  // Auto-select the role for the chosen city. A manually chosen role is kept
+  // across membership updates while it stays active in the city; the server
+  // priority (driver > dispatcher > region_admin) applies only on first entry.
   const cityMembership = (r) =>
     memberships.find(
       (m) =>
@@ -86,10 +89,21 @@ const useTaxi = () => {
 
   useEffect(() => {
     if (!cityId) return;
+    const saved = localStorage.getItem(LAST_ROLE_PREFIX + cityId);
+    if (saved && cityMembership(saved)) {
+      setRole(saved);
+      return;
+    }
     const nextRole =
       ["driver", "dispatcher", "region_admin"].find((r) => cityMembership(r)) ?? "passenger";
     setRole(nextRole);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [cityId, memberships.length]);
+
+  const selectRole = (r) => {
+    if (cityId) localStorage.setItem(LAST_ROLE_PREFIX + cityId, String(r));
+    setRole(r);
+  };
 
   const userRole =
     cityMembership(role) || (me?.user?.isSuperadmin && role === "dispatcher")
@@ -105,7 +119,7 @@ const useTaxi = () => {
     cityId,
     setCityId,
     role: userRole,
-    setRole,
+    setRole: selectRole,
     membership: cityMembership(userRole),
     driverProfile:
       me?.driverProfiles?.find(

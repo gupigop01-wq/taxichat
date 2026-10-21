@@ -37,7 +37,9 @@ export const apiUpload = async (file, fileType) => {
     reader.onerror = reject;
   });
   const res = await apiPost("/api/upload", {
-    data: base64,
+    data: base64.replace(/^data:[^;,]+(?:;codecs=[^;,]+)?;base64,/, (header) =>
+      header.replace(/;codecs=[^;,]+/, "")
+    ),
     fileType: fileType === "audio" ? "video" : fileType,
   });
   return res.data.uploadData;

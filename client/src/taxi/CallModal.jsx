@@ -1,5 +1,6 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useId, useRef, useState } from "react";
 import { startRingtone, stopRingtone, playDialTone } from "./ringtone";
+import { IconText } from "./TaxiIcon";
 
 // Full-screen call UI in the Android style.
 // Incoming: accept / decline. Outgoing: "Вызов...". Active: duration, mute,
@@ -12,6 +13,9 @@ const formatDuration = (seconds) => {
 
 const CallModal = ({ call, acceptCall, endCall }) => {
   const audioRef = useRef();
+  const actionRef = useRef(null);
+  const panelRef = useRef(null);
+  const nameId = useId();
   const [seconds, setSeconds] = useState(0);
   const [muted, setMuted] = useState(false);
   const [speaker, setSpeaker] = useState(false);
@@ -47,10 +51,33 @@ const CallModal = ({ call, acceptCall, endCall }) => {
   useEffect(() => { if (call.audioTracks) call.audioTracks.forEach((t) => { t.enabled = !muted; }); }, [muted, call.audioTracks]);
   useEffect(() => { if (call.speakerSink) call.speakerSink(speaker); }, [speaker, call.speakerSink]);
 
+  useEffect(() => {
+    if (call.status === "idle") return undefined;
+    const previousFocus = document.activeElement;
+    actionRef.current?.focus();
+    const onKeyDown = (event) => {
+      if (event.key !== "Tab") return;
+      const controls = [...panelRef.current.querySelectorAll("button:not(:disabled)")];
+      if (event.shiftKey && document.activeElement === controls[0]) {
+        event.preventDefault();
+        controls[controls.length - 1].focus();
+      } else if (!event.shiftKey && document.activeElement === controls[controls.length - 1]) {
+        event.preventDefault();
+        controls[0].focus();
+      }
+    };
+    document.addEventListener("keydown", onKeyDown);
+    return () => {
+      document.removeEventListener("keydown", onKeyDown);
+      previousFocus?.focus?.();
+    };
+  }, [call.status]);
+
   if (call.status === "idle") return null;
 
   const incoming = call.status === "incoming";
   const active = call.status === "active";
+  const failed = call.status === "failed";
   const outgoing = call.status === "calling" || call.status === "ringing" || call.status === "connecting";
 
   const statusText = incoming
@@ -62,29 +89,31 @@ const CallModal = ({ call, acceptCall, endCall }) => {
         : call.error ?? "Звонок не состоялся";
 
   return (
-    <div className="fixed inset-0 z-[12000] flex flex-col bg-[#0b0f14] text-white">
+    <div ref={panelRef} role="dialog" aria-modal="true" aria-labelledby={nameId} className="fixed inset-0 z-[12000] flex flex-col overflow-y-auto bg-[#0b0f14] text-white">
       <audio ref={audioRef} data-call-audio autoPlay />
 
-      <div className="flex-1 flex flex-col items-center justify-center gap-3 px-6 text-center">
-        <div className="w-[9rem] h-[9rem] rounded-full bg-white/10 flex items-center justify-center text-[3.4rem]">
-          {call.peerEmoji ?? "👤"}
+      <div className="flex-1 flex flex-col items-center justify-center gap-3 px-4 py-4 text-center min-h-0">
+        <div className="w-[6rem] h-[6rem] sm:w-[9rem] sm:h-[9rem] shrink-0 rounded-full bg-white/10 flex items-center justify-center text-[3rem] sm:text-[3.4rem]">
+           <IconText>{call.peerEmoji ?? "👤"}</IconText>
         </div>
-        <div className="font-display font-extrabold text-[2rem] break-words">
+        <div id={nameId} className="font-display font-extrabold text-[1.7rem] sm:text-[2rem] break-words min-w-0 max-w-full">
           {call.peerName ?? "Участник"}
         </div>
-        <div className={`text-[1.5rem] ${active ? "text-success" : "text-white/70"}`}>
+        <div className={`text-[1.5rem] ${active ? "text-success" : "text-white/70"}`} aria-live={active ? "off" : "polite"}>
           {statusText}
         </div>
-        {call.error && <div className="text-danger text-[1.4rem]">{call.error}</div>}
+        {call.error && <div role="alert" className="text-danger text-[1.4rem]">{call.error}</div>}
       </div>
 
       {dialOpen && active && (
-        <div className="px-6 pb-4">
-          <div className="text-center text-[1.8rem] min-h-[2.2rem] mb-2">{digits}</div>
-          <div className="grid grid-cols-3 gap-2">
+        <div className="px-4 sm:px-6 pb-4">
+          <div className="text-center text-[1.8rem] min-h-[2.2rem] mb-2 break-all" aria-label={`Набрано: ${digits || "пусто"}`}>{digits}</div>
+          <div className="grid grid-cols-3 gap-2 max-w-[22rem] mx-auto">
             {["1","2","3","4","5","6","7","8","9","*","0","#"].map((d) => (
               <button
                 key={d}
+                type="button"
+                aria-label={`Набрать ${d}`}
                 onClick={() => setDigits((v) => v + d)}
                 className="py-3 rounded-xl bg-white/10 text-[1.6rem] font-semibold"
               >
@@ -95,56 +124,81 @@ const CallModal = ({ call, acceptCall, endCall }) => {
         </div>
       )}
 
-      <div className="p-6 pt-2">
-        {incoming ? (
+      <div className="p-4 sm:p-6 pt-2 pb-[max(1rem,env(safe-area-inset-bottom))]">
+        {failed ? (
+          <div className="flex justify-center">
+            <button
+              type="button"
+              ref={actionRef}
+              className="btn-accent press px-8 py-3 rounded-2xl font-semibold"
+              onClick={() => endCall("hangup")}
+            >
+              Закрыть
+            </button>
+          </div>
+        ) : incoming ? (
           <div className="flex items-center justify-around">
             <button
+              type="button"
+              ref={actionRef}
               className="w-[7rem] h-[7rem] rounded-full bg-danger flex items-center justify-center text-[2.4rem]"
               onClick={() => endCall("decline")}
               aria-label="Отклонить"
             >
-              📵
+               <IconText>📵</IconText>
             </button>
             <button
+              type="button"
               className="w-[7rem] h-[7rem] rounded-full bg-success flex items-center justify-center text-[2.4rem] animate-pulse"
               onClick={acceptCall}
               aria-label="Ответить"
             >
-              📞
+               <IconText>📞</IconText>
             </button>
           </div>
         ) : (
           <>
-            <div className="flex items-center justify-center gap-4 mb-5">
+            <div className="flex items-center justify-center gap-2 sm:gap-4 mb-4 sm:mb-5">
               <button
+                type="button"
+                aria-pressed={muted}
+                aria-label="Отключить микрофон"
                 onClick={() => setMuted((v) => !v)}
-                className={`w-[6rem] h-[6rem] rounded-full flex flex-col items-center justify-center text-[1.1rem] ${muted ? "bg-white text-black" : "bg-white/10"}`}
+                className={`w-[5rem] h-[5rem] sm:w-[6rem] sm:h-[6rem] rounded-full flex flex-col items-center justify-center text-[1.1rem] ${muted ? "bg-white text-black" : "bg-white/10"}`}
               >
-                <span className="text-[1.8rem]">{muted ? "🔇" : "🎙"}</span>
+                 <span className="text-[1.8rem]"><IconText>{muted ? "🔇" : "🎙"}</IconText></span>
                 Микро
               </button>
               <button
+                type="button"
+                aria-pressed={speaker}
+                aria-label="Громкая связь"
                 onClick={() => setSpeaker((v) => !v)}
-                className={`w-[6rem] h-[6rem] rounded-full flex flex-col items-center justify-center text-[1.1rem] ${speaker ? "bg-white text-black" : "bg-white/10"}`}
+                className={`w-[5rem] h-[5rem] sm:w-[6rem] sm:h-[6rem] rounded-full flex flex-col items-center justify-center text-[1.1rem] ${speaker ? "bg-white text-black" : "bg-white/10"}`}
               >
-                <span className="text-[1.8rem]">🔊</span>
+                 <span className="text-[1.8rem]"><IconText>🔊</IconText></span>
                 Громко
               </button>
               <button
+                type="button"
+                aria-pressed={dialOpen}
+                aria-label="Клавиатура набора"
                 onClick={() => setDialOpen((v) => !v)}
-                className={`w-[6rem] h-[6rem] rounded-full flex flex-col items-center justify-center text-[1.1rem] ${dialOpen ? "bg-white text-black" : "bg-white/10"}`}
+                className={`w-[5rem] h-[5rem] sm:w-[6rem] sm:h-[6rem] rounded-full flex flex-col items-center justify-center text-[1.1rem] ${dialOpen ? "bg-white text-black" : "bg-white/10"}`}
               >
-                <span className="text-[1.8rem]">🔢</span>
+                 <span className="text-[1.8rem]"><IconText>🔢</IconText></span>
                 Клавиши
               </button>
             </div>
             <div className="flex justify-center">
               <button
+                type="button"
+                ref={actionRef}
                 className="w-[7rem] h-[7rem] rounded-full bg-danger flex items-center justify-center text-[2.4rem]"
                 onClick={() => endCall("hangup")}
                 aria-label="Завершить"
               >
-                📵
+                 <IconText>📵</IconText>
               </button>
             </div>
           </>

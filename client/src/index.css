@@ -58,35 +58,15 @@ html {
   svg > path {
     @apply stroke-secondary-text fill-secondary-text;
   }
+
+  svg.taxi-icon, svg.taxi-icon > path {
+    stroke: currentColor;
+    fill: none;
+  }
 }
 
-/* Same taxi palette for the legacy dark-mode selector */
-html.dark {
-  --bg-primary: rgb(13, 13, 13);
-  --bg-secondary: rgb(30, 30, 30);
-  --border: rgb(42, 42, 42);
-  --bg-search: rgb(22, 22, 22);
-  --border-search: rgb(46, 46, 46);
-  --bg-cta-icon: rgb(247, 199, 0);
-  --bg-message: rgb(38, 38, 38);
-  --bg-message-highlight: rgba(247, 199, 0, 0.12);
-  --text-primary: rgb(255, 255, 255);
-  --text-secondary: rgb(156, 156, 156);
-  --text-secondary-light: rgba(255, 255, 255, 0.08);
-  --avatar-check: rgb(247, 199, 0);
-  --avatar-check-read: rgb(90, 90, 90);
-  --scrollbar: rgba(255, 255, 255, 0.18);
-  --danger: rgb(229, 72, 77);
-  --success: rgb(46, 160, 67);
-  --warning: rgb(247, 199, 0);
-  --accent: rgb(247, 199, 0);
-  --text-on-accent: rgb(17, 17, 17);
-  --box-shadow: rgba(0, 0, 0, 0.6);
-  --bg-modal: rgba(13, 13, 13, 0.85);
-  --bg-send: rgba(255, 255, 255, 0.08);
-  --message-status: rgba(255, 255, 255, 0.6);
-  --recorder-icon: rgb(247, 199, 0);
-}
+/* Same taxi palette for the legacy dark-mode selector: the theme is always
+   dark, the variables above in :root are the single source — no duplicates. */
 
 @layer components {
   .fallback-anim::before {
@@ -100,7 +80,7 @@ html.dark {
   }
 
   .custom-scrollbar {
-    scrollbar-color: red !important;
+    scrollbar-color: rgba(255, 255, 255, 0.25) transparent !important;
   }
 
   .custom-scrollbar::-webkit-scrollbar {
@@ -190,13 +170,13 @@ textarea {
   padding-bottom: env(safe-area-inset-bottom, 0px);
 }
 
-/* Larger touch targets on mobile */
+/* Larger touch targets on mobile: one consistent minimum for all actions */
 @media (max-width: 40em) {
   button,
   select,
   a {
     touch-action: manipulation;
-    min-height: 40px;
+    min-height: 44px;
   }
 }
 
@@ -211,7 +191,7 @@ textarea {
   @apply custom-scrollbar;
 }
 
-html.dark #emojiPicker .EmojiPickerReact {
+#emojiPicker .EmojiPickerReact {
   --epr-bg-color: var(--bg-primary);
   --epr-category-label-bg-color: var(--bg-primary);
   --epr-picker-border-color: transparent;
@@ -384,12 +364,19 @@ select option {
     line-height: 1.4;
   }
   button, select, a {
-    min-height: 34px;
+    min-height: 44px;
   }
   input, select, textarea {
     font-size: 16px;
-    min-height: 40px;
+    min-height: 44px;
   }
+}
+
+/* Единая видимая фокус-обводка для клавиатурной навигации */
+:focus-visible {
+  outline: 2px solid #f7c700;
+  outline-offset: 2px;
+  border-radius: 6px;
 }
 /* Кнопка «Назад»: крупная, с фоном и касанием */
 .btn-back {
@@ -406,6 +393,120 @@ select option {
   border: 1px solid rgba(255, 255, 255, 0.14);
 }
 .btn-back:active { transform: scale(0.96); }
+
+/* Taxi workspace: one compact context header and one persistent navigation rail. */
+.taxi-shell {
+  position: relative;
+  min-height: 0;
+  background: radial-gradient(ellipse 70% 25% at 50% 0%, rgba(247,199,0,.065), transparent), #0d0d0d;
+}
+.taxi-header {
+  background: rgba(16,16,16,.94);
+  backdrop-filter: blur(22px);
+  -webkit-backdrop-filter: blur(22px);
+  border-bottom: 1px solid rgba(255,255,255,.09);
+}
+.taxi-header-row, .taxi-context-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  max-width: 1100px;
+  margin: 0 auto;
+}
+.taxi-context-row { margin-top: 12px; }
+.taxi-context-row > :first-child { flex: 1; min-width: 0; }
+.taxi-heading { max-width: 1100px; margin: 10px auto 0; font-size: 16px; font-weight: 700; line-height: 1.2; color: #e8e8e8; }
+.taxi-avatar, .taxi-role-trigger, .taxi-role-static {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  min-height: 42px;
+  border: 1px solid rgba(255,255,255,.12);
+  background: #252525;
+  border-radius: 14px;
+}
+.taxi-avatar { width: 44px; color: #f7c700; }
+.taxi-role-anchor { position: relative; min-width: 0; max-width: 48%; }
+.taxi-role-trigger, .taxi-role-static { padding: 0 10px; color: #e6e6e6; font-size: 12px; white-space: nowrap; }
+.taxi-role-trigger > svg:first-child, .taxi-role-static > svg { color: #f7c700; }
+.taxi-role-menu {
+  position: absolute;
+  top: calc(100% + 8px);
+  right: 0;
+  width: max-content;
+  min-width: 175px;
+  padding: 5px;
+  border: 1px solid rgba(255,255,255,.14);
+  border-radius: 16px;
+  background: #222;
+  box-shadow: 0 16px 42px rgba(0,0,0,.65);
+  z-index: 80;
+}
+.taxi-role-menu button { display: flex; align-items: center; gap: 9px; width: 100%; padding: 10px; border-radius: 11px; text-align: left; font-size: 13px; }
+.taxi-role-menu button.is-current { background: rgba(247,199,0,.13); color: #f7c700; }
+.taxi-content { padding-bottom: calc(77px + env(safe-area-inset-bottom, 0px)); }
+/* Keyboard open: hide bottom rail, passenger subtabs AND the city/role row
+   (switching city or role while typing is unnecessary), compact the header.
+   All of it frees the layout so the whole composer sits above the keyboard,
+   and content becomes scrollable as a final guarantee. */
+.taxi-shell:has(input:focus, textarea:focus) .taxi-content { padding-bottom: 0; overflow-y: auto; }
+.taxi-shell:has(input:focus, textarea:focus) .taxi-tabbar { display: none; }
+.taxi-shell:has(input:focus, textarea:focus) .taxi-subnav { display: none; }
+.taxi-shell:has(input:focus, textarea:focus) .taxi-context-row { display: none; }
+.taxi-tabbar {
+  position: absolute;
+  bottom: 0;
+  left: 0;
+  right: 0;
+  z-index: 30;
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 4px;
+  max-width: 1100px;
+  margin: 0 auto;
+  padding: 7px 10px calc(8px + env(safe-area-inset-bottom, 0px));
+  background: rgba(19,19,19,.97);
+  border: 1px solid rgba(255,255,255,.1);
+  border-bottom: 0;
+  border-radius: 18px 18px 0 0;
+  box-shadow: 0 -12px 36px rgba(0,0,0,.45);
+  backdrop-filter: blur(22px);
+  -webkit-backdrop-filter: blur(22px);
+}
+.taxi-tab { position: relative; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 2px; min-height: 54px; border-radius: 12px; color: #9c9c9c; font-size: 11px; font-weight: 600; }
+.taxi-tab.is-active { color: #f7c700; }
+.taxi-tab > * { position: relative; z-index: 1; }
+.taxi-tab-active { position: absolute; inset: 0; z-index: 0; background: rgba(247,199,0,.11); border: 1px solid rgba(247,199,0,.25); border-radius: 12px; }
+.taxi-logout { display: flex; align-items: center; justify-content: center; gap: 8px; width: 100%; min-height: 48px; border: 1px solid rgba(229,72,77,.24); border-radius: 14px; color: #f49a9b; background: rgba(229,72,77,.07); font-weight: 700; }
+.taxi-subnav { border-bottom: 1px solid rgba(255,255,255,.07); }
+.taxi-subtab { flex: 0 0 auto; min-height: 38px; padding: 6px 13px; border: 1px solid rgba(255,255,255,.09); border-radius: 12px; color: #aeaeae; background: #1b1b1b; white-space: nowrap; }
+.taxi-subtab.is-active { color: #111; background: #f7c700; border-color: #f7c700; font-weight: 800; }
+.taxi-filter-row { padding: 4px; border: 1px solid rgba(255,255,255,.09); border-radius: 15px; background: #181818; }
+.taxi-filter-tab { flex: 1; max-width: 190px; min-height: 38px; border-radius: 11px; color: #9c9c9c; }
+.taxi-filter-tab.is-active { background: #2c2c2c; color: #f7c700; font-weight: 800; }
+.taxi-trip-card { border: 1px solid rgba(255,255,255,.1); border-radius: 18px; background: linear-gradient(155deg, #242424, #191919); box-shadow: 0 8px 24px rgba(0,0,0,.16); }
+.taxi-trip-card:hover { border-color: rgba(247,199,0,.36); }
+.taxi-empty-state { border: 1px dashed rgba(255,255,255,.12); border-radius: 18px; background: rgba(255,255,255,.025); }
+@keyframes taxi-panel-in { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: translateY(0); } }
+.taxi-panel-enter { animation: taxi-panel-in .22s ease-out both; }
+@media (prefers-reduced-motion: reduce) { .taxi-panel-enter { animation: none; } }
+@media (min-width: 751px) {
+  .taxi-header { padding-left: 24px; padding-right: 24px; }
+  .taxi-content { width: 100%; max-width: 1100px; margin: 0 auto; }
+  /* Floating pill instead of an attached rail on desktop */
+  .taxi-tabbar {
+    left: 50%;
+    right: auto;
+    transform: translateX(-50%);
+    width: min(560px, 60%);
+    margin-bottom: 10px;
+    border-bottom: 1px solid rgba(255,255,255,.1);
+    border-radius: 18px;
+box-shadow: 0 12px 36px rgba(0,0,0,.45);
+  }
+}
 
 /* Карточка заказа: крупный заголовок и статус */
 .order-card-title {

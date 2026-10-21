@@ -1,5 +1,6 @@
-import { useEffect, useState } from "react";
+import { useEffect, useId, useRef, useState } from "react";
 import { createPortal } from "react-dom";
+import { IconText } from "./TaxiIcon";
 
 // Выбор времени «на время»: слайдеры часов (0–23) и минут (0–59) и полоса дат
 // на две недели вперёд. Крупное табло, всё в стиле проекта.
@@ -36,10 +37,41 @@ const dayLabel = (date, index) => {
 
 const TimePicker = ({ value, onChange, open, onClose, title }) => {
   const [cursor, setCursor] = useState(() => parseValue(value));
+  const panelRef = useRef(null);
+  const closeRef = useRef(null);
+  const titleId = useId();
+  const hourId = useId();
+  const minuteId = useId();
 
   useEffect(() => {
     if (open) setCursor(parseValue(value));
   }, [open, value]);
+
+  useEffect(() => {
+    if (!open) return undefined;
+    const previousFocus = document.activeElement;
+    closeRef.current?.focus();
+    const onKeyDown = (event) => {
+      if (event.key === "Escape") {
+        event.preventDefault();
+        onClose();
+      } else if (event.key === "Tab") {
+        const controls = [...panelRef.current.querySelectorAll("button, input")];
+        if (event.shiftKey && document.activeElement === controls[0]) {
+          event.preventDefault();
+          controls[controls.length - 1].focus();
+        } else if (!event.shiftKey && document.activeElement === controls[controls.length - 1]) {
+          event.preventDefault();
+          controls[0].focus();
+        }
+      }
+    };
+    document.addEventListener("keydown", onKeyDown);
+    return () => {
+      document.removeEventListener("keydown", onKeyDown);
+      previousFocus?.focus?.();
+    };
+  }, [open, onClose]);
 
   if (!open) return null;
 
@@ -79,12 +111,16 @@ const TimePicker = ({ value, onChange, open, onClose, title }) => {
       onClick={onClose}
     >
       <div
-        className="w-full max-w-[34rem] glass-strong rounded-3xl p-4 space-y-4 anim-sheet"
+        ref={panelRef}
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby={titleId}
+        className="w-full max-w-[34rem] max-h-[calc(100dvh-2rem)] overflow-y-auto glass-strong rounded-3xl p-4 space-y-4 anim-sheet"
         onClick={(event) => event.stopPropagation()}
       >
         <div className="flex items-center justify-between gap-2">
-          <div className="font-display font-extrabold text-[1.7rem]">🕓 {title ?? "Когда подать"}</div>
-          <button className="btn-back" onClick={onClose} aria-label="Закрыть">✖️</button>
+           <div id={titleId} className="font-display font-extrabold text-[1.7rem]"><IconText>🕓</IconText> {title ?? "Когда подать"}</div>
+           <button ref={closeRef} type="button" className="btn-back" onClick={onClose} aria-label="Закрыть"><IconText>✖️</IconText></button>
         </div>
 
         <div className="rounded-2xl bg-[#0d0d0d] border border-secondary-text/25 py-3 text-center">
@@ -104,6 +140,9 @@ const TimePicker = ({ value, onChange, open, onClose, title }) => {
             return (
               <button
                 key={day.toISOString()}
+                type="button"
+                aria-pressed={selected}
+                aria-label={day.toLocaleDateString("ru-RU", { weekday: "long", day: "numeric", month: "long" })}
                 className={`press shrink-0 px-3 py-2 rounded-2xl text-[1.3rem] ${
                   selected ? "btn-accent font-bold" : "glass text-secondary-text"
                 }`}
@@ -118,11 +157,12 @@ const TimePicker = ({ value, onChange, open, onClose, title }) => {
         <div className="space-y-3">
           <div>
             <div className="flex items-center justify-between text-[1.3rem] text-secondary-text mb-1">
-              <span>🕐 Час</span>
+               <label htmlFor={hourId}><IconText>🕐 Час</IconText></label>
               <span className="text-cta-icon font-bold text-[1.5rem]">{pad(cursor.getHours())}</span>
             </div>
             <input
               type="range"
+              id={hourId}
               min="0"
               max="23"
               step="1"
@@ -134,11 +174,12 @@ const TimePicker = ({ value, onChange, open, onClose, title }) => {
 
           <div>
             <div className="flex items-center justify-between text-[1.3rem] text-secondary-text mb-1">
-              <span>⏱ Минуты</span>
+               <label htmlFor={minuteId}><IconText>⏱ Минуты</IconText></label>
               <span className="text-cta-icon font-bold text-[1.5rem]">{pad(cursor.getMinutes())}</span>
             </div>
             <input
               type="range"
+              id={minuteId}
               min="0"
               max="59"
               step="1"
@@ -150,10 +191,10 @@ const TimePicker = ({ value, onChange, open, onClose, title }) => {
         </div>
 
         <div className="grid grid-cols-2 gap-2">
-          <button className="press rounded-2xl py-3 text-[1.4rem] glass" onClick={onClose}>
+          <button type="button" className="press rounded-2xl py-3 text-[1.4rem] glass" onClick={onClose}>
             Отмена
           </button>
-          <button className="press rounded-2xl py-3 text-[1.4rem] btn-accent font-bold" onClick={commit}>
+          <button type="button" className="press rounded-2xl py-3 text-[1.4rem] btn-accent font-bold" onClick={commit}>
             Готово
           </button>
         </div>

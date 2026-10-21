@@ -3,6 +3,7 @@ import { useReactMediaRecorder } from "react-media-recorder";
 import { apiGet, apiPost, apiUpload } from "./api";
 import useSocket from "../hooks/useSocket";
 import { useDialog } from "./AppDialog";
+import { IconText } from "./TaxiIcon";
 
 // Direct dialog between a passenger and a driver after a call (concept 1.6)
 const DirectChat = ({ chatId, me, onBack }) => {
@@ -12,6 +13,7 @@ const DirectChat = ({ chatId, me, onBack }) => {
   const [messages, setMessages] = useState([]);
   const [text, setText] = useState("");
   const [error, setError] = useState(null);
+  const [blocked, setBlocked] = useState(false);
   const load = async () => {
     try {
       const history = await apiGet(`/api/chats/${chatId}/messages`);
@@ -53,10 +55,11 @@ const DirectChat = ({ chatId, me, onBack }) => {
 
   const blockPeer = async () => {
     if (!chat?.peer?._id) return;
-    if (!(await confirm({ title: "🚫 Заблокировать собеседника?", text: "Звонки и диалоги станут недоступны.", okText: "Заблокировать", danger: true }))) return;
+     if (!(await confirm({ title: "Заблокировать собеседника?", text: "Звонки и диалоги станут недоступны.", okText: "Заблокировать", danger: true }))) return;
     try {
       await apiPost("/api/blocks", { userId: String(chat.peer._id) });
-      setError("Собеседник заблокирован");
+      setBlocked(true);
+      setError(null);
     } catch (err) {
       setError(err.message);
     }
@@ -70,7 +73,6 @@ const DirectChat = ({ chatId, me, onBack }) => {
 
   const { startRecording, stopRecording } = useReactMediaRecorder({
     audio: true,
-    blobPropertyBag: { type: "audio/mp3" },
     onStop: async (_, blob) => {
       try {
         setUploading(true);
@@ -125,10 +127,10 @@ const DirectChat = ({ chatId, me, onBack }) => {
       return (
         <div
           key={message._id}
-          className={`anim-rise max-w-[78%] rounded-2xl p-2.5 text-[1.8rem] leading-snug ${message.mine ? "btn-accent ml-auto" : "glass"}`}
+          className={`max-w-[82%] rounded-2xl p-2.5 text-[1.8rem] leading-snug ${message.mine ? "btn-accent ml-auto" : "glass"}`}
         >
           {message.senderName && <div className="text-xs text-secondary-text">{message.senderName}</div>}
-          <img src={message.meta?.imageUrl} alt="Фото" className="rounded max-h-[16rem]" />
+          <img src={message.meta?.imageUrl} alt={`Фото от ${message.senderName ?? "участника"}`} className="rounded max-h-[16rem]" />
         </div>
       );
     }
@@ -136,12 +138,12 @@ const DirectChat = ({ chatId, me, onBack }) => {
       return (
         <div
           key={message._id}
-          className={`anim-rise max-w-[78%] rounded-2xl p-2.5 text-[1.8rem] leading-snug ${message.mine ? "btn-accent ml-auto" : "glass"}`}
+          className={`max-w-[82%] rounded-2xl p-2.5 text-[1.8rem] leading-snug ${message.mine ? "btn-accent ml-auto" : "glass"}`}
         >
           {message.senderName && <div className="text-xs text-secondary-text">{message.senderName}</div>}
-          <div className="flex items-center gap-2">
-            <span>🎤</span>
-            <audio controls src={message.meta?.voiceNoteUrl} />
+          <div className="flex flex-wrap items-center gap-2 min-w-0">
+             <span className="shrink-0"><IconText>🎤</IconText></span>
+            <audio controls src={message.meta?.voiceNoteUrl} className="w-full max-w-[13rem] min-w-0" />
           </div>
         </div>
       );
@@ -149,7 +151,7 @@ const DirectChat = ({ chatId, me, onBack }) => {
     return (
       <div
         key={message._id}
-        className={`anim-rise max-w-[78%] rounded-2xl p-2.5 text-[1.8rem] leading-snug ${message.mine ? "btn-accent ml-auto" : "glass"}`}
+        className={`max-w-[82%] rounded-2xl p-2.5 text-[1.8rem] leading-snug break-words ${message.mine ? "btn-accent ml-auto" : "glass"}`}
       >
         {message.senderName && <div className="text-xs text-secondary-text">{message.senderName}</div>}
         {message.body}
@@ -159,14 +161,16 @@ const DirectChat = ({ chatId, me, onBack }) => {
 
   return (
     <div className="flex flex-col h-full">
-      <div className="relative p-3 border-b border-secondary-text/20">
-        <button className="underline absolute left-3 top-3 text-sm" onClick={onBack}>← Назад</button>
-        <div className="text-center px-16 font-semibold truncate">
+      <div className="flex items-center gap-2 p-3 border-b border-secondary-text/20">
+        <button type="button" className="underline shrink-0 text-sm" onClick={onBack}>← Назад</button>
+        <div className="text-center flex-1 min-w-0 font-semibold truncate">
           Диалог: {chat?.peer?.name ?? "..."}
         </div>
         {chat?.peer?._id && (
           <button
-            className="absolute right-3 top-3 underline text-secondary-text text-sm"
+            type="button"
+            className="shrink-0 underline text-secondary-text text-sm"
+            aria-label="Заблокировать собеседника"
             onClick={blockPeer}
           >
             Блок
@@ -174,9 +178,14 @@ const DirectChat = ({ chatId, me, onBack }) => {
         )}
       </div>
 
-      {error && <div className="text-danger text-sm px-3 py-1">{error}</div>}
+      {blocked && (
+        <div role="status" className="text-success text-sm px-3 py-1">
+          Диалог заблокирован: отправка сообщений недоступна
+        </div>
+      )}
+      {error && <div role="alert" className="text-danger text-sm px-3 py-1">{error}</div>}
 
-      <div className="flex-1 overflow-y-auto p-3 space-y-2">
+      <div className="flex-1 min-h-0 overflow-y-auto p-3 space-y-2" role="log" aria-label="Сообщения диалога" aria-live="polite" aria-relevant="additions text">
         {messages.length === 0 && (
           <div className="text-secondary-text text-sm">
             Сообщений пока нет. Диалог появился после звонка.
@@ -186,31 +195,36 @@ const DirectChat = ({ chatId, me, onBack }) => {
       </div>
 
       <form
-        className="flex gap-2 p-3 border-t border-secondary-text/20"
+        className="flex gap-2 p-3 border-t border-secondary-text/20 min-w-0"
         onSubmit={(event) => {
           event.preventDefault();
-          send({ body: text });
+            if (blocked) return;
+            if (text.trim() && !uploading && !recording) send({ body: text });
         }}
       >
-        <input ref={fileInputRef} type="file" accept="image/*" hidden onChange={onPickPhoto} />
-        <button type="button" className="px-2 text-lg" onClick={() => fileInputRef.current?.click()}>
-          📷
+        <input ref={fileInputRef} type="file" accept="image/*" hidden aria-label="Выбрать фото" onChange={onPickPhoto} />
+        <button type="button" aria-label="Прикрепить фото" disabled={blocked || uploading || recording} className="px-2 text-lg shrink-0" onClick={() => fileInputRef.current?.click()}>
+           <IconText>📷</IconText>
         </button>
         <button
           type="button"
-          className={`px-2 text-lg ${recording ? "text-danger animate-pulse" : ""}`}
+          aria-label={recording ? "Остановить запись голосового сообщения" : "Записать голосовое сообщение"}
+          aria-pressed={recording}
+          disabled={blocked || uploading}
+          className={`px-2 text-lg shrink-0 ${recording ? "text-danger animate-pulse" : ""}`}
           onClick={toggleRecording}
         >
-          {recording ? `⏺ ${recordSeconds}с` : "🎤"}
+           <IconText>{recording ? `⏺ ${recordSeconds}с` : "🎤"}</IconText>
         </button>
         <input
-          className="flex-1 bg-[#0d0d0d] text-white placeholder:text-secondary-text border border-secondary-text/30 rounded-2xl px-4 py-2.5 text-[1.5rem] focus:border-accent focus:outline-none transition-colors"
+          aria-label="Сообщение"
+          className="flex-1 min-w-0 bg-[#0d0d0d] text-white placeholder:text-secondary-text border border-secondary-text/30 rounded-2xl px-3 sm:px-4 py-2.5 text-[1.5rem] focus:border-accent focus:outline-none transition-colors"
           value={text}
           onChange={(event) => setText(event.target.value)}
-          placeholder={uploading ? "Загрузка..." : "Сообщение..."}
-          disabled={uploading || recording}
+          placeholder={blocked ? "Диалог заблокирован" : uploading ? "Загрузка..." : "Сообщение..."}
+          disabled={blocked || uploading || recording}
         />
-        <button className="press btn-accent px-4 rounded-2xl font-display font-bold" type="submit">➤</button>
+         <button className="press btn-accent px-3 sm:px-4 rounded-2xl font-display font-bold shrink-0" type="submit" aria-label="Отправить сообщение" disabled={blocked || !text.trim() || uploading || recording}><IconText>➤</IconText></button>
       </form>
     </div>
   );

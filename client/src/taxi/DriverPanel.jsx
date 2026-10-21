@@ -1,13 +1,14 @@
 import { useEffect, useState } from "react";
 import { useDispatch } from "react-redux";
 import { notificationActions } from "../store/notificationSlice";
-import { apiGet, apiPost, apiPatch } from "./api";
+import { apiGet, apiPost } from "./api";
 import useSocket from "../hooks/useSocket";
 import OrderChat from "./OrderChat";
 import DirectChat from "./DirectChat";
 import ChatList from "./ChatList";
 import { useDialog } from "./AppDialog";
 import { statusBadge, formatWhen } from "./statusLabels";
+import { IconText } from "./TaxiIcon";
 
 // Driver panel: shift toggle, live feed of published orders, assigned orders
 const DriverPanel = ({ me, cityId, driverProfile, refreshMe, startCall }) => {
@@ -16,7 +17,8 @@ const DriverPanel = ({ me, cityId, driverProfile, refreshMe, startCall }) => {
   const { socketListen, socketEmit, socket } = useSocket();
   const [view, setView] = useState(null); // { type, id }
   const [orders, setOrders] = useState([]);
-  const [online, setOnline] = useState(driverProfile?.shift === "online");
+  const [online, setOnline] = useState(driverProfile?.shift != null && driverProfile.shift !== "offline");
+  const [shiftPending, setShiftPending] = useState(false);
   const [error, setError] = useState(null);
 
   const load = async () => {
@@ -32,7 +34,10 @@ const DriverPanel = ({ me, cityId, driverProfile, refreshMe, startCall }) => {
   const [linked, setLinked] = useState(socket.connected);
   const [lastEvent, setLastEvent] = useState("—");
   useEffect(() => {
-    const up = () => setLinked(true);
+    const up = () => {
+      setLinked(true);
+      refreshMe().catch((err) => setError(err.message));
+    };
     const down = () => setLinked(false);
     socket.on("connect", up);
     socket.on("disconnect", down);
@@ -80,12 +85,41 @@ const DriverPanel = ({ me, cityId, driverProfile, refreshMe, startCall }) => {
     return () => clearInterval(timer);
   }, [online]);
 
-  const toggleShift = async () => {
+  const toggleShift = () => {
+    if (!linked || shiftPending) return;
     const next = online ? "offline" : "online";
+    setShiftPending(true);
     socketEmit("driver:shift", { shift: next });
-    setOnline(!online);
-    await refreshMe();
   };
+
+  useEffect(() => {
+    if (!shiftPending) return undefined;
+    const onPresence = (payload) => {
+      if (String(payload?.driverId) !== String(me?.user?._id)) return;
+      refreshMe().then(() => setShiftPending(false)).catch((err) => {
+        setError(err.message);
+        setShiftPending(false);
+      });
+    };
+    const onError = (payload) => {
+      setError(payload?.error ?? "Не удалось сменить статус смены");
+      setShiftPending(false);
+    };
+    socket.on("driver:presence", onPresence);
+    socket.on("driver:error", onError);
+    // Presence events are throttled server-side; verify the saved state even without one.
+    const timer = setTimeout(() => {
+      refreshMe().then(() => setShiftPending(false)).catch((err) => {
+        setError(err.message);
+        setShiftPending(false);
+      });
+    }, 5500);
+    return () => {
+      clearTimeout(timer);
+      socket.off("driver:presence", onPresence);
+      socket.off("driver:error", onError);
+    };
+  }, [shiftPending, me?.user?._id]);
 
   // Sync the shift toggle with the server state (busy while assigned)
   useEffect(() => {
@@ -148,9 +182,9 @@ const DriverPanel = ({ me, cityId, driverProfile, refreshMe, startCall }) => {
 
   const sendOffer = async (order) => {
     try {
-      const priceText = await ask({ title: "💰 Цена поездки", placeholder: "Например: 350", okText: "Отправить" });
+      const priceText = await ask({ title: "Цена поездки", placeholder: "Например: 350", okText: "Отправить" });
       if (!priceText) return;
-      const etaMin = parseInt((await ask({ title: "⏱ Время подачи, минут", placeholder: "Например: 5", inputMode: "numeric", okText: "Отправить" })) ?? "10", 10);
+      const etaMin = parseInt((await ask({ title: "Время подачи, минут", placeholder: "Например: 5", inputMode: "numeric", okText: "Отправить" })) ?? "10", 10);
       await apiPost(`/api/orders/${order._id}/offers`, { priceText, etaMin });
       dispatch(
         notificationActions.addNotification({
@@ -192,17 +226,23 @@ const DriverPanel = ({ me, cityId, driverProfile, refreshMe, startCall }) => {
       (order.isTarget || order.mode !== "direct")
   );
   const mine = orders.filter(
-    (order) => !["PUBLISHED", "DRAFT"].includes(order.status)
+    (order) => String(order.driverId) === String(me?.user?._id) &&
+      !["PUBLISHED", "DRAFT"].includes(order.status)
   );
+  const active = mine.filter((order) => ["ASSIGNED", "ARRIVING", "WAITING", "IN_RIDE", "DISPUTE"].includes(order.status));
+  const booked = mine.filter((order) => order.status === "BOOKED");
 
   return (
     <div className="p-4 space-y-4 overflow-y-auto h-full max-w-[42rem] mx-auto w-full anim-rise">
-      <div className="flex items-center gap-3">
+      <div className="glass rounded-2xl p-4 space-y-2">
+      <div className="flex items-center gap-3 flex-wrap">
         <button
           className={`press px-6 py-3 rounded-2xl text-white font-display font-bold tracking-wide ${online ? "bg-success shadow-[0_0_24px_rgba(46,160,67,0.45)]" : "bg-danger"}`}
           onClick={toggleShift}
+          disabled={!linked || shiftPending}
+          aria-busy={shiftPending}
         >
-          {online ? "На линии" : "Не на линии"}
+          {shiftPending ? "Смена статуса…" : online ? "На линии · выключить" : "Не на линии · выйти"}
         </button>
         {driverProfile && (
           <div className="text-sm text-secondary-text">
@@ -211,33 +251,79 @@ const DriverPanel = ({ me, cityId, driverProfile, refreshMe, startCall }) => {
           </div>
         )}
       </div>
+      <div className="text-sm text-secondary-text" role="status">
+        {linked ? "Связь с сервером есть" : "Нет связи: смена статуса недоступна"}
+        {shiftPending && " · Ожидаем подтверждения смены"}
+      </div>
+      </div>
 
       {error && <div className="text-danger text-sm">{error}</div>}
 
       {!online && (
         <div className="text-sm text-secondary-text">
-          😴 Выйдите на линию, чтобы получать заказы
+          <IconText>😴 Выйдите на линию, чтобы получать заказы</IconText>
         </div>
       )}
 
-      <div className="text-center text-[1.4rem] text-secondary-text">
-        {linked ? "🟢 Связь с сервером" : "🔴 Нет связи — переподключение…"} · последнее событие: {lastEvent}
+      <div className="text-xs text-secondary-text">Последнее событие: {lastEvent}</div>
+
+      <div>
+          <h3 className="font-display font-bold mb-2 tracking-wide"><IconText>🚕 Моя поездка</IconText> {active.length > 0 && `· ${active.length}`}</h3>
+          {active.length === 0 && <div className="glass rounded-2xl p-4 text-sm text-secondary-text">Сейчас нет назначенной поездки</div>}
+          <div className="space-y-2">
+            {active.map((order) => (
+              <div key={order._id} className="glass rounded-2xl p-4 space-y-3 border border-accent/50">
+                <div className="font-display font-bold text-lg">{order.to?.text ? `${order.from?.text} → ${order.to?.text}` : order.from?.text}</div>
+                <div className="text-sm text-secondary-text"><IconText>{statusBadge(order.status)}</IconText> · <IconText>{formatWhen(order.when)}</IconText> · {order.pax} пасс.</div>
+                {order.passenger?.name && <div className="text-sm">Пассажир: {order.passenger.name}</div>}
+                <div className="flex flex-wrap gap-2 items-center">
+                  {order.status === "ASSIGNED" && <button className="btn-accent press px-4 py-2 rounded-xl font-semibold" onClick={() => myAction(order, "arrive")}>Выехал</button>}
+                  {order.status === "ARRIVING" && <button className="btn-accent press px-4 py-2 rounded-xl font-semibold" onClick={() => myAction(order, "wait")}>Я на месте</button>}
+                  {order.status === "WAITING" && <>
+                    <button className="bg-success text-white px-4 py-2 rounded-xl" onClick={() => myAction(order, "start")}>Поехали</button>
+                    <button className="bg-danger text-white px-4 py-2 rounded-xl" onClick={() => myAction(order, "no_show")}>Не вышел</button>
+                  </>}
+                  {order.status === "IN_RIDE" && <>
+                    <button className="bg-success text-white px-4 py-2 rounded-xl" onClick={() => myAction(order, "finish")}>Завершить</button>
+                    <button className="underline" onClick={() => myAction(order, "undo_start")}>Отменить начало</button>
+                  </>}
+                  <button className="underline" onClick={() => setView({ type: "order", id: order._id })}>Чат {order.unreadCount > 0 && `(${order.unreadCount})`}</button>
+                  {order.passengerId && <button className="underline" onClick={() => startCall({ kind: "order", orderId: order._id, target: String(order.passengerId), name: "Пассажир", fromRole: "driver" })}>Позвонить</button>}
+                </div>
+              </div>
+            ))}
+          </div>
       </div>
 
       <div>
-        <h3 className="font-display font-bold mb-2 text-center tracking-wide">📢 Лента заказов</h3>
+          <h3 className="font-display font-bold mb-2 tracking-wide"><IconText>🔖 Мои брони</IconText> {booked.length > 0 && `· ${booked.length}`}</h3>
+          {booked.length === 0 && <div className="text-sm text-secondary-text">Нет предстоящих броней</div>}
+          <div className="space-y-2">{booked.map((order) => (
+            <div key={order._id} className="glass rounded-2xl p-4 space-y-2">
+              <div className="font-semibold">{order.to?.text ? `${order.from?.text} → ${order.to?.text}` : order.from?.text}</div>
+              <div className="text-sm text-secondary-text"><IconText>{formatWhen(order.when)}</IconText> · {order.pax} пасс.</div>
+              <div className="flex flex-wrap gap-3 items-center">
+                <button className="btn-accent press px-3 py-2 rounded-xl font-semibold" onClick={() => activateBooking(order)}>Приступить к брони</button>
+                <button className="underline" onClick={() => setView({ type: "order", id: order._id })}>Открыть заказ</button>
+              </div>
+            </div>
+          ))}</div>
+      </div>
+
+      <div>
+        <h3 className="font-display font-bold mb-2 text-center tracking-wide"><IconText>📢 Лента заказов</IconText></h3>
           <div className="space-y-2">
-          {feed.length === 0 && <div className="text-sm text-secondary-text">📭 Пока нет заказов</div>}
+          {feed.length === 0 && <div className="text-sm text-secondary-text"><IconText>📭 Пока нет заказов</IconText></div>}
           {feed.map((order) => (
-            <div key={order._id} className="anim-rise glass rounded-2xl p-4 text-[1.5rem] text-center">
-                <div className="font-semibold text-center">
+            <div key={order._id} className="glass rounded-2xl p-4 text-[1.5rem]">
+                <div className="font-semibold break-words">
                   {order.to?.text ? `${order.from?.text} → ${order.to?.text}` : order.from?.text}
                 </div>
-              <div className="text-secondary-text text-center">
+              <div className="text-secondary-text">
                 {formatWhen(order.when)} · {order.pax} пасс.
                 {order.notes ? ` · ${order.notes}` : ""}
               </div>
-              <div className="flex gap-2 mt-2 justify-center flex-wrap">
+              <div className="flex gap-2 mt-2 flex-wrap">
                 {order.isTarget || order.matchMode === "first_take" ? (
                   <button className="bg-success text-white px-3 py-1.5 rounded-lg" onClick={() => accept(order)}>
                     Принять
@@ -252,20 +338,12 @@ const DriverPanel = ({ me, cityId, driverProfile, refreshMe, startCall }) => {
                     className="border border-accent text-cta-icon px-3 py-1.5 rounded-lg"
                     onClick={() => book(order)}
                   >
-                    🔖 Забронировать
+                    <IconText>🔖 Забронировать</IconText>
                   </button>
                 )}
                                 <button className="underline" onClick={() => setView({ type: "order", id: order._id })}>
                   Открыть заказ
                 </button>
-                {["ASSIGNED","ARRIVING","WAITING","IN_RIDE"].includes(order.status) && order.passengerId && (
-                  <button
-                    className="bg-success text-white px-3 py-1.5 rounded-xl text-sm font-semibold"
-                    onClick={() => startCall({ kind: "order", orderId: order._id, target: String(order.passengerId), name: "Пассажир", fromRole: "driver" })}
-                  >
-                    📞 Позвонить
-                  </button>
-                )}
               </div>
             </div>
           ))}
@@ -273,74 +351,7 @@ const DriverPanel = ({ me, cityId, driverProfile, refreshMe, startCall }) => {
       </div>
 
       <div>
-        <h3 className="font-display font-bold mb-2 text-center tracking-wide">📋 Мои заказы</h3>
-          <div className="space-y-2">
-          {mine.length === 0 && <div className="text-sm text-secondary-text">📭 Нет активных заказов</div>}
-{mine.map((order) => (
-            <div key={order._id} className="anim-rise glass rounded-2xl p-4 text-[1.5rem]">
-              {/* Tapping the card opens the order chat, same as for the passenger */}
-              <button className="press w-full text-left" onClick={() => setView({ type: "order", id: order._id })}>
-                <div className="flex items-center gap-2">
-                  <div className="order-card-title min-w-0">
-                    {order.to?.text ? `${order.from?.text} → ${order.to?.text}` : order.from?.text}
-                  </div>
-                  {order.unreadCount > 0 && (
-                    <span className="ml-auto bg-danger text-white rounded-full px-2 text-xs shrink-0">
-                      {order.unreadCount}
-                    </span>
-                  )}
-                </div>
-                <div className="text-secondary-text">
-                  {order.passenger?.name ? `🧍 ${order.passenger.name} · ` : ""}
-                  {statusBadge(order.status)} · {formatWhen(order.when)}
-                </div>
-              </button>
-              <div className="flex gap-2 mt-2 justify-center flex-wrap">
-                {order.status === "BOOKED" && (
-                  <button
-                    className="btn-accent press px-3 py-1.5 rounded-xl font-semibold"
-                    onClick={() => activateBooking(order)}
-                  >
-                    🚕 Приступить к брони
-                  </button>
-                )}
-                {order.status === "ASSIGNED" && (
-                  <button className="btn-accent press px-3 py-1.5 rounded-xl font-semibold" onClick={() => myAction(order, "arrive")}>Выехал</button>
-                )}
-                {order.status === "ARRIVING" && (
-                  <button className="btn-accent press px-3 py-1 rounded-xl font-semibold" onClick={() => myAction(order, "wait")}>Я на месте</button>
-                )}
-                {order.status === "WAITING" && (
-                  <>
-                    <button className="bg-success text-white px-3 py-1 rounded" onClick={() => myAction(order, "start")}>Поехали</button>
-                    <button className="bg-danger text-white px-3 py-1 rounded" onClick={() => myAction(order, "no_show")}>Не вышел</button>
-                  </>
-                )}
-                {order.status === "IN_RIDE" && (
-                  <>
-                    <button className="bg-success text-white px-3 py-1 rounded" onClick={() => myAction(order, "finish")}>Завершить</button>
-                    <button className="underline" onClick={() => myAction(order, "undo_start")}>Отменить начало</button>
-                  </>
-                )}
-                                <button className="underline" onClick={() => setView({ type: "order", id: order._id })}>
-                  Открыть заказ
-                </button>
-                {["ASSIGNED","ARRIVING","WAITING","IN_RIDE"].includes(order.status) && order.passengerId && (
-                  <button
-                    className="bg-success text-white px-3 py-1.5 rounded-xl text-sm font-semibold"
-                    onClick={() => startCall({ kind: "order", orderId: order._id, target: String(order.passengerId), name: "Пассажир", fromRole: "driver" })}
-                  >
-                    📞 Позвонить
-                  </button>
-                )}
-              </div>
-            </div>
-          ))}
-        </div>
-      </div>
-
-      <div>
-        <h3 className="font-display font-bold mb-2 text-center tracking-wide">💬 Диалоги</h3>
+        <h3 className="font-display font-bold mb-2 text-center tracking-wide"><IconText>💬 Диалоги</IconText></h3>
         <ChatList onOpen={(chatId) => setView({ type: "direct", id: chatId })} />
       </div>
     </div>

@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { apiGet } from "./api";
 import DirectChat from "./DirectChat";
+import { IconText } from "./TaxiIcon";
 
 // List of dialogs from direct calls with the peer name, car caption, unread
 // badge and the last message preview (concept 1.6)
@@ -43,11 +44,11 @@ const ChatList = ({ onOpen, refreshKey = 0 }) => {
           {chat.carCaption && <div className="text-secondary-text text-center">{chat.carCaption}</div>}
           {chat.lastMessage && (
             <div className="text-secondary-text truncate">
-              {chat.lastMessage.kind === "photo"
-                ? "📷 Фото"
-                : chat.lastMessage.kind === "voice"
-                  ? "🎤 Голосовое"
-                  : chat.lastMessage.body}
+               <IconText>{chat.lastMessage.kind === "photo"
+                 ? "📷 Фото"
+                 : chat.lastMessage.kind === "voice"
+                   ? "🎤 Голосовое"
+                   : chat.lastMessage.body}</IconText>
             </div>
           )}
         </button>

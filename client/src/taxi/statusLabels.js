@@ -55,6 +55,18 @@ export const CITY_STATUS_LABELS = {
 export const cityStatusLabel = (status) =>
   CITY_STATUS_LABELS[status] ?? status;
 
+// Короткие подписи для узких списков выбора города
+export const CITY_STATUS_SHORT = {
+  DORMANT: "Не запущен",
+  WAITLIST: "Ожидание",
+  PILOT: "Пилот",
+  ACTIVE: "Активен",
+  SUSPENDED: "Пауза",
+};
+
+export const cityStatusShort = (status) =>
+  CITY_STATUS_SHORT[status] ?? cityStatusLabel(status);
+
 // Человекочитаемое время заказа: «Сейчас», «К 14:30», «Завтра 09:15», «15 окт 18:00»
 export const formatWhen = (when) => {
   if (!when?.at || when.type === "now") return "Сейчас";

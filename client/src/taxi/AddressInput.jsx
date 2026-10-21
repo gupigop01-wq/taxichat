@@ -1,6 +1,7 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import STREETS from "./streetsData";
+import { IconText } from "./TaxiIcon";
 
 // Поле адреса с текстовыми подсказками: чисто по названию, без координат и
 // геокодинга. Панель выносится в портал, раскрывается ВВЕРХ над полем, поэтому
@@ -77,7 +78,7 @@ const chipText = (chip) => {
   return `${chip} `;
 };
 
-const AddressInput = ({ value, onChange, onEnter, placeholder, cityName, cities }) => {
+const AddressInput = ({ value, onChange, onEnter, placeholder, cityName, cities, label }) => {
   const [open, setOpen] = useState(false);
   const [active, setActive] = useState(0);
   const inputRef = useRef(null);
@@ -183,6 +184,7 @@ const AddressInput = ({ value, onChange, onEnter, placeholder, cityName, cities 
         required
         placeholder={placeholder}
         value={value}
+        aria-label={label}
         onChange={(event) => {
           onChange(event.target.value);
           setOpen(true);
@@ -222,7 +224,7 @@ const AddressInput = ({ value, onChange, onEnter, placeholder, cityName, cities 
           <div className="overflow-y-auto overscroll-contain">
             {streets.length > 0 && (
               <div className="px-3 py-1.5 text-[1.1rem] text-secondary-text">
-                🛣 Улицы · {cityName ?? "город"} и район
+                 <IconText>🛣 Улицы</IconText> · {cityName ?? "город"} и район
               </div>
             )}
             {streets.map((street, index) => (
@@ -243,7 +245,7 @@ const AddressInput = ({ value, onChange, onEnter, placeholder, cityName, cities 
 
             {citySuggestions.length > 0 && (
               <div className="px-3 py-1.5 text-[1.1rem] text-secondary-text border-t border-white/10">
-                🏙 Города · межгород из {cityName ?? "города"}
+                 <IconText>🏙 Города</IconText> · межгород из {cityName ?? "города"}
               </div>
             )}
             {citySuggestions.map((name, index) => (
@@ -254,7 +256,7 @@ const AddressInput = ({ value, onChange, onEnter, placeholder, cityName, cities 
                 onClick={() => applyText(name)}
                 className="w-full text-left px-3 py-2 text-[1.4rem] flex items-center gap-2"
               >
-                <span className="truncate">🏙 {name}</span>
+                 <span className="truncate"><IconText>🏙</IconText> {name}</span>
               </button>
             ))}
 

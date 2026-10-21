@@ -85,6 +85,7 @@ app.use("/api/contacts", contactsRouter);
 app.use("/api/profile", profileRouter);
 app.use("/api/chatRoom", chatRoomRouter);
 app.use("/api/upload", uploadRouter);
+app.use("/api/uploads", uploadRouter);
 app.use("/api/memberships", membershipRouter);
 app.use("/api/dispatch", dispatchRouter);
 app.use("/api/applications", applicationRouter);

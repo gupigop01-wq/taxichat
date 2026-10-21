@@ -78,9 +78,9 @@ const setSpeakerOutput = async (on) => {
           { kind, target, orderId, cityId, chatId, fromRole, signalData },
           (ack) => {
             if (ack?.error) {
-              setCall({ status: "failed", error: ack.error });
-              reset();
-              setTimeout(() => setCall({ status: "idle" }), 2500);
+              // Keep the failure on screen until the user closes the call panel
+              stopStream();
+              setCall({ status: "failed", error: ack.error, peerName: name });
             } else {
               setCall((prev) => ({
                 ...prev,
@@ -101,8 +101,8 @@ const setSpeakerOutput = async (on) => {
         setCall((prev) => ({ ...prev, remoteStream }));
       });
     } catch (error) {
+      stopStream();
       setCall({ status: "failed", error: error.message });
-      setTimeout(() => setCall({ status: "idle" }), 2500);
     }
   }, [socketEmit]);
 
@@ -141,9 +141,8 @@ const setSpeakerOutput = async (on) => {
     };
 
     const onBusy = ({ error }) => {
+      stopStream();
       setCall({ status: "failed", error });
-      reset();
-      setTimeout(() => setCall({ status: "idle" }), 2500);
     };
 
     socketListen("call:invite", onInvite);
