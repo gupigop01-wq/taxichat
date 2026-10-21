@@ -3,6 +3,8 @@ const handlers = require("./handlers");
 
 let agenda = null;
 
+const PREORDER_GRACE_MS = 15 * 60 * 1000;
+
 // Scheduling helpers used by controllers and the state machine; they no-op
 // while Agenda is not initialized (e.g. in tests)
 const scheduleOrderJobs = async (order) => {
@@ -19,12 +21,19 @@ const scheduleOrderJobs = async (order) => {
 
     await agenda.schedule(
       new Date(Math.max(Date.now(), activateAt)),
-      "preorder:reminder",
+      "preorder:activate",
       { orderId: String(order._id) }
     );
     await agenda.schedule(
       new Date(Math.max(Date.now(), reminderAt)),
-      "preorder:activate",
+      "preorder:reminder",
+      { orderId: String(order._id) }
+    );
+    // A preorder nobody booked expires shortly after its time; the handler
+    // only touches orders still PUBLISHED, so bookings are unaffected
+    await agenda.schedule(
+      new Date(Math.max(Date.now(), new Date(order.when.at).getTime() + PREORDER_GRACE_MS)),
+      "order:expire",
       { orderId: String(order._id) }
     );
     return;

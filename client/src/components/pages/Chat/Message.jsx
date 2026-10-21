@@ -3,6 +3,7 @@ import CallMessage from "./CallMessage";
 import MessageReadStatus from "./MessageReadStatus";
 import VoiceMessage from "./VoiceMessage";
 import Image from "../../globals/Image";
+import sanitizeMessageHtml from "../../../utilities/sanitizeMessageHtml";
 
 function Message({ messageData, className, messageReceived }) {
   // Image messages
@@ -55,7 +56,7 @@ function Message({ messageData, className, messageReceived }) {
       className={`${className} p-[1.5rem] rounded-3xl sm:text-[1.4rem] overflow-hidden gap-[1rem] relative`}
     >
       <div
-        dangerouslySetInnerHTML={{ __html: messageData.message }}
+        dangerouslySetInnerHTML={{ __html: sanitizeMessageHtml(messageData.message) }}
         className="font-semibold max-w-[25rem] mr-[3.5rem] break-words"
       ></div>
       <MessageReadStatus

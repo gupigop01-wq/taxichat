@@ -3,6 +3,9 @@ const express = require("express");
 const mongoose = require("mongoose");
 const dotenv = require("dotenv");
 
+// Load .env before app.js reads CLIENT_URL and other settings at import time
+dotenv.config({ path: path.join(__dirname, ".env") });
+
 const app = require("./app");
 
 // Serve the prebuilt client (single-port mode); API routes take precedence
@@ -18,8 +21,6 @@ app.get("*", (req, res) => {
       .send("Сборка клиента отсутствует. Выполните: npm run build --prefix client");
   }
 });
-
-dotenv.config({ path: path.join(__dirname, ".env") });
 
 const start = async () => {
   // Ephemeral in-memory MongoDB for cloud dev environments (Codespaces,

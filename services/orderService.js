@@ -74,6 +74,9 @@ const TRANSITIONS = {
     roles: ["passenger", "driver", "dispatcher"],
   },
   expire: { from: ["PUBLISHED"], to: "EXPIRED", roles: ["system"] },
+  // A dispatcher closes a dispute: the ride counts as done or as cancelled
+  resolve_complete: { from: ["DISPUTE"], to: "COMPLETED", roles: ["dispatcher"] },
+  resolve_cancel: { from: ["DISPUTE"], to: "CANCELLED", roles: ["dispatcher"] },
 };
 
 const SYSTEM_MESSAGES = {
@@ -90,6 +93,8 @@ const SYSTEM_MESSAGES = {
   cancel: "Заказ отменён",
   dispute: "Открыт спор: к чату подключается диспетчер",
   expire: "Время заказа истекло",
+  resolve_complete: "Спор закрыт диспетчером: поездка засчитана",
+  resolve_cancel: "Спор закрыт диспетчером: заказ отменён",
 };
 
 const TERMINAL_STATUSES = ["COMPLETED", "CANCELLED", "NO_SHOW", "EXPIRED"];
@@ -115,6 +120,7 @@ const applyPenalty = async (order, event, actor, previousStatus) => {
     user.banned = true;
   }
   await user.save();
+  if (user.banned) require("../utilities/sockets").disconnectUser(user._id);
 
   await logAudit({
     actorId: actor.userId,
@@ -257,12 +263,26 @@ const transition = async (order, event, actor, { reason } = {}) => {
   if (event === "cancel" && reason) {
     systemText = `Заказ отменён: ${reason}`;
   }
+  if (event.startsWith("resolve_") && reason) {
+    systemText = `${SYSTEM_MESSAGES[event]}. ${reason}`;
+  }
 
   if (
     (event === "assign" || event === "activate") &&
     order.driverId
   ) {
     membersToAdd.push(order.driverId);
+  }
+
+  // Claim the status atomically before saving, so two concurrent requests
+  // (e.g. two drivers booking the same order) cannot both win the race
+  if (!order.isNew) {
+    const claimed = await Order.updateOne(
+      { _id: order._id, status: previousStatus },
+      { $set: { status: order.status } }
+    );
+    if (claimed.matchedCount === 0)
+      throw new ApiError(409, "Заказ уже изменён другим участником");
   }
 
   await order.save();

@@ -74,6 +74,9 @@ const orderSchema = new mongoose.Schema(
     targetDriverId: { type: mongoose.Schema.Types.ObjectId, ref: "User" },
     chatId: { type: mongoose.Schema.Types.ObjectId, ref: "Chat" },
     expiresAt: Date,
+    // Booking lifecycle timestamps (set by the state machine)
+    bookedAt: Date,
+    activatedAt: Date,
     // Read-only share link token ("поделиться поездкой", concept 1.10)
     shareToken: { type: String, index: true },
   },

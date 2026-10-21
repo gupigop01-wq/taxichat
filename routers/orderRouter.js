@@ -16,6 +16,7 @@ router.route("/:id").get(orderController.getOrder);
 router.route("/:id/action").post(orderController.orderAction);
 router.route("/:id/cancel").post(orderController.cancelOrder);
 router.route("/:id/dispute").post(orderController.openDispute);
+router.route("/:id/resolve").post(orderController.resolveDispute);
 router.route("/:id/offers").get(orderController.listOffers);
 router.route("/:id/offers").post(orderController.createOffer);
 router.route("/:id/accept").post(orderController.acceptOrder);

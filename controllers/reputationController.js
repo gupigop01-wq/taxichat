@@ -10,6 +10,16 @@ const catchAsyncError = require("../utilities/catchAsyncError");
 const { validateBody } = require("../utilities/catchAsyncError");
 const { logAudit } = require("../utilities/audit");
 const botDispatcher = require("../services/botDispatcher");
+const { regionAdminCityIds } = require("../utilities/rbac");
+
+// City of a complaint: the order city, otherwise the reporter's home city
+const complaintCityId = async (orderId, reporter) => {
+  if (orderId && mongoose.isValidObjectId(orderId)) {
+    const order = await Order.findById(orderId).select("cityId");
+    if (order) return order.cityId;
+  }
+  return reporter?.homeCityId ?? undefined;
+};
 
 const ratingSchema = z.object({
   stars: z
@@ -99,6 +109,8 @@ exports.rateOrder = [
 
 // GET /api/drivers/:userId/rating — aggregated rating
 exports.getDriverRating = catchAsyncError(async (req, res) => {
+  if (!mongoose.isValidObjectId(req.params.userId))
+    throw new ApiError(400, "Некорректный пользователь");
   const aggregate = await Rating.aggregate([
     { $match: { toUserId: new mongoose.Types.ObjectId(req.params.userId) } },
     { $group: { _id: "$toUserId", avg: { $avg: "$stars" }, count: { $sum: 1 } } },
@@ -120,10 +132,12 @@ exports.createComplaint = [
   catchAsyncError(async (req, res) => {
     const { orderId, targetUserId, type, text } = req.body;
 
+    const cityId = await complaintCityId(orderId, req.user);
     const complaint = await Complaint.create({
       reporterId: req.user._id,
       ...(orderId && { orderId }),
       ...(targetUserId && { targetUserId }),
+      ...(cityId && { cityId }),
       type,
       text,
     });
@@ -153,6 +167,7 @@ exports.raiseSos = catchAsyncError(async (req, res) => {
   const complaint = await Complaint.create({
     reporterId: req.user._id,
     orderId: order._id,
+    cityId: order.cityId,
     type: "sos",
     text: req.body?.text ?? "Кнопка SOS нажата во время заказа",
   });
@@ -193,6 +208,9 @@ exports.listComplaints = catchAsyncError(async (req, res) => {
   const filter = {};
   if (req.query.status) filter.status = req.query.status;
   if (req.query.type) filter.type = req.query.type;
+  // Region admins see only complaints of their region; superadmin sees all
+  const scope = await regionAdminCityIds(req);
+  if (scope !== null) filter.cityId = { $in: scope };
 
   const complaints = await Complaint.find(filter)
     .populate("reporterId", "username name")
@@ -207,6 +225,9 @@ exports.listComplaints = catchAsyncError(async (req, res) => {
 exports.reviewComplaint = catchAsyncError(async (req, res) => {
   const complaint = await Complaint.findById(req.params.id);
   if (!complaint) throw new ApiError(404, "Жалоба не найдена");
+  const scope = await regionAdminCityIds(req);
+  if (scope !== null && !scope.includes(String(complaint.cityId)))
+    throw new ApiError(404, "Жалоба не найдена");
   if (complaint.status !== "OPEN")
     throw new ApiError(409, "Жалоба уже обработана");
 

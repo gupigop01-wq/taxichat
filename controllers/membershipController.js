@@ -152,7 +152,15 @@ exports.createMembership = [
 
     if (status === "ACTIVE") {
       // Validate the car pair before activating the driver
-      await assertCarPairFree(membership);
+      // An occupied pair rolls the whole application back instead of
+      // leaving an ACTIVE driver with a duplicate car
+      try {
+        await assertCarPairFree(membership);
+      } catch (error) {
+        await DriverProfile.deleteOne({ membershipId: membership._id });
+        await Membership.findByIdAndDelete(membership._id);
+        throw error;
+      }
       membership.reviewedBy = req.user._id;
       await membership.save();
     }

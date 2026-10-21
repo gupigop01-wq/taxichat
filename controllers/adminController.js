@@ -252,6 +252,7 @@ exports.setUserBan = [
   const banned = req.body?.banned !== false;
   user.banned = banned;
   await user.save();
+  if (banned) require("../utilities/sockets").disconnectUser(user._id);
 
   await logAudit({
     actorId: req.user._id,

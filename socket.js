@@ -57,7 +57,7 @@ const initSocket = (httpServer) => {
   // Handshake auth: the JWT cookie is verified server-side and the verified
   // userId is bound to the socket; client-provided ids are never trusted
   // (concept 1.13: entrance only through ACTIVE memberships)
-  io.use((socket, next) => {
+  io.use(async (socket, next) => {
     const cookies = parseCookies(socket.handshake.headers.cookie);
     const token = cookies[AUTH_COOKIE];
     if (!token) {
@@ -67,6 +67,15 @@ const initSocket = (httpServer) => {
     try {
       const payload = jwt.verify(token, process.env.JWT_SECRET_KEY);
       socket.userId = String(payload.userId);
+    } catch (error) {
+      socket.userId = null;
+      return next();
+    }
+    // Banned accounts get no live connection
+    try {
+      const User = require("./models/User");
+      const user = await User.findById(socket.userId).select("banned");
+      if (!user || user.banned) socket.userId = null;
     } catch (error) {
       socket.userId = null;
     }

@@ -33,7 +33,8 @@ const sendAuthCookie = (user, res, statusCode) => {
 
   res.status(statusCode).json({
     status: "success",
-    data: { token, user },
+    // The JWT lives only in the httpOnly cookie; never expose it to page JS
+    data: { user },
   });
 };
 

@@ -85,6 +85,27 @@ exports.actionSchema = actionSchema;
 exports.cancelSchema = cancelSchema;
 exports.disputeSchema = disputeSchema;
 
+const resolveDisputeSchema = z.object({
+  outcome: z.enum(["complete", "cancel"], {
+    errorMap: () => ({ message: "Исход спора: complete или cancel" }),
+  }),
+  reason: z.string().trim().max(300).optional(),
+});
+exports.resolveDisputeSchema = resolveDisputeSchema;
+
+// A dispatcher of the order city, a region admin of its region or superadmin
+const canManageOrderCity = async (req, order) => {
+  const isCityDispatcher = (req.memberships ?? []).some(
+    (item) =>
+      item.role === "dispatcher" &&
+      item.status === "ACTIVE" &&
+      String(item.cityId?._id ?? item.cityId) === String(order.cityId)
+  );
+  if (isCityDispatcher) return true;
+  const regionCityIds = await regionAdminCityIds(req);
+  return regionCityIds === null || regionCityIds.includes(String(order.cityId));
+};
+
 // DriverProfile is keyed by membership; resolve it through the membership
 const driverProfileForOrder = async (order) => {
   if (!order.driverId) return null;
@@ -541,6 +562,27 @@ exports.openDispute = [
   }),
 ];
 
+// POST /api/orders/:id/resolve — a dispatcher closes a dispute
+exports.resolveDispute = [
+  validateBody(resolveDisputeSchema),
+  catchAsyncError(async (req, res) => {
+    const order = await Order.findById(req.params.id);
+    if (!order) throw new ApiError(404, "Заказ не найден");
+    if (!(await canManageOrderCity(req, order)))
+      throw new ApiError(403, "Закрыть спор может только диспетчер города");
+
+    const event = req.body.outcome === "complete" ? "resolve_complete" : "resolve_cancel";
+    const actor = { userId: req.user._id, role: "dispatcher" };
+    const { events } = await transition(order, event, actor, { reason: req.body.reason });
+    emitOrderEvents(events);
+
+    res.json({
+      status: "success",
+      data: { order: await serializeOrderFor(order, req) },
+    });
+  }),
+];
+
 // POST /api/orders/:id/offers — driver sends price and ETA
 exports.createOffer = [
   validateBody(offerSchema),
@@ -689,6 +731,26 @@ exports.acceptOrder = [
         throw new ApiError(404, "Отклик не найден");
       if (offer.status === "ACCEPTED")
         throw new ApiError(409, "Отклик уже принят");
+      if (offer.status === "DECLINED")
+        throw new ApiError(409, "Отклик больше недоступен");
+
+      // The driver must still work in the city and, for "now" orders, be free
+      const offerDriverActive = await Membership.exists({
+        userId: offer.driverId,
+        cityId: order.cityId,
+        role: "driver",
+        status: "ACTIVE",
+      });
+      if (!offerDriverActive)
+        throw new ApiError(409, "Водитель больше не работает в этом городе");
+      if (order.when?.type !== "scheduled") {
+        const driverBusy = await Order.exists({
+          driverId: offer.driverId,
+          status: { $in: ["ASSIGNED", "ARRIVING", "WAITING", "IN_RIDE"] },
+        });
+        if (driverBusy)
+          throw new ApiError(409, "Водитель уже выполняет другой заказ");
+      }
 
       const { order: assignedOrder, events } = await assignAtomically(
         order._id,
@@ -771,16 +833,7 @@ exports.assignByDispatcher = [
 
     // Only a dispatcher of the order city, a region admin of its region or
     // the superadmin may assign a driver manually
-    const isCityDispatcher = (req.memberships ?? []).some(
-      (item) =>
-        item.role === "dispatcher" &&
-        item.status === "ACTIVE" &&
-        String(item.cityId?._id ?? item.cityId) === String(order.cityId)
-    );
-    const regionCityIds = await regionAdminCityIds(req);
-    const isRegionAdmin =
-      regionCityIds === null || regionCityIds.includes(String(order.cityId));
-    if (!isCityDispatcher && !isRegionAdmin)
+    if (!(await canManageOrderCity(req, order)))
       throw new ApiError(403, "Назначать водителя может только диспетчер города");
 
     if (!mongoose.isValidObjectId(req.body.membershipId))

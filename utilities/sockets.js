@@ -17,4 +17,11 @@ const emitOrderEvents = (sideEffects = []) => {
   }
 };
 
-module.exports = { setIo, getIo, emitOrderEvents };
+// Drops every live socket of a user (e.g. right after a ban)
+const disconnectUser = (userId) => {
+  const io = getIo();
+  if (!io || !userId) return;
+  io.in(`user:${userId}`).disconnectSockets(true);
+};
+
+module.exports = { setIo, getIo, emitOrderEvents, disconnectUser };

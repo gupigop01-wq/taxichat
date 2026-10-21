@@ -9,6 +9,9 @@ const complaintSchema = new mongoose.Schema(
     reporterId: { type: mongoose.Schema.Types.ObjectId, ref: "User", required: true },
     orderId: { type: mongoose.Schema.Types.ObjectId, ref: "Order", index: true },
     targetUserId: { type: mongoose.Schema.Types.ObjectId, ref: "User" },
+    // City the complaint belongs to (order city or reporter's home city);
+    // region admins see only complaints of their region
+    cityId: { type: mongoose.Schema.Types.ObjectId, ref: "City", index: true },
     type: { type: String, enum: COMPLAINT_TYPES, required: true },
     status: { type: String, enum: COMPLAINT_STATUSES, default: "OPEN", index: true },
     text: { type: String, required: true, maxlength: 1000 },
