@@ -92,7 +92,7 @@ const speak = (text) => {
   }
 };
 
-function NotificationItem({ item, onDismiss }) {
+export function NotificationItem({ item, onDismiss }) {
   const dispatch = useDispatch();
   const openOrder = () => {
     if (item.orderId) window.dispatchEvent(new CustomEvent("bombila:open-order", { detail: { orderId: item.orderId } }));

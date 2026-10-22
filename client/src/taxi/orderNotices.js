@@ -23,6 +23,7 @@ export const newOrderNotice = (order = {}) => ({
 });
 
 export const newOfferNotice = (offer = {}) => ({
+  kind: "offer",
   message: "🚕 Новый отклик водителя",
   speakText: `Новый отклик водителя. Цена ${offer.priceText ?? ""}`,
   type: "info",
