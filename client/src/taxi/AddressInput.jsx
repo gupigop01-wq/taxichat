@@ -94,25 +94,28 @@ const AddressInput = ({ value, onChange, onEnter, placeholder, cityName, cities,
   const chips = useMemo(() => routeChips(value), [value]);
 
   // Панель считается от верхнего края поля и выводится над ним
-  const measure = () => {
-    const el = inputRef.current;
-    if (!el) return;
-    const r = el.getBoundingClientRect();
-    setRect({ left: r.left, width: r.width, top: r.top });
-  };
-
+  // The field also moves without any resize event: on focus the CSS
+  // keyboard mode hides the header rows and lifts the composer. A stale
+  // position put the panel over the order button and stole its tap, so
+  // follow the field every frame while the panel is open.
   useLayoutEffect(() => {
     if (!open) return undefined;
-    measure();
-    const onShift = () => measure();
-    window.addEventListener("resize", onShift);
-    window.visualViewport?.addEventListener("resize", onShift);
-    window.visualViewport?.addEventListener("scroll", onShift);
-    return () => {
-      window.removeEventListener("resize", onShift);
-      window.visualViewport?.removeEventListener("resize", onShift);
-      window.visualViewport?.removeEventListener("scroll", onShift);
+    let frame = 0;
+    let last = "";
+    const follow = () => {
+      const el = inputRef.current;
+      if (el) {
+        const r = el.getBoundingClientRect();
+        const key = `${r.left}|${r.width}|${r.top}`;
+        if (key !== last) {
+          last = key;
+          setRect({ left: r.left, width: r.width, top: r.top });
+        }
+      }
+      frame = requestAnimationFrame(follow);
     };
+    follow();
+    return () => cancelAnimationFrame(frame);
   }, [open]);
 
   useEffect(() => {

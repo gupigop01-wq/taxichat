@@ -224,7 +224,7 @@ const DirectChat = ({ chatId, me, onBack }) => {
           placeholder={blocked ? "Диалог заблокирован" : uploading ? "Загрузка..." : "Сообщение..."}
           disabled={blocked || uploading || recording}
         />
-         <button className="press btn-accent px-3 sm:px-4 rounded-2xl font-display font-bold shrink-0" type="submit" aria-label="Отправить сообщение" disabled={blocked || !text.trim() || uploading || recording}><IconText>➤</IconText></button>
+         <button className="press btn-accent px-3 sm:px-4 rounded-2xl font-display font-bold shrink-0" type="submit" onMouseDown={(event) => event.preventDefault()} aria-label="Отправить сообщение" disabled={blocked || !text.trim() || uploading || recording}><IconText>➤</IconText></button>
       </form>
     </div>
   );

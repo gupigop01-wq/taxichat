@@ -66,10 +66,23 @@ const OrderChat = ({ orderId, me, onBack, startCall }) => {
       ? order?.passengerId
       : order?.driverId;
 
+  // While this chat is on screen its messages are visible here: tell the
+  // notice hook not to pop a toast over the conversation being read
+  useEffect(() => {
+    window.__bombilaOpenOrderId = String(orderId);
+    return () => {
+      if (window.__bombilaOpenOrderId === String(orderId)) window.__bombilaOpenOrderId = null;
+    };
+  }, [orderId]);
+
   const load = async () => {
     try {
       const res = await apiGet(`/api/orders/${orderId}`);
       setOrder(res.data.order);
+      if (res.data.order.myRating) {
+        setStars(res.data.order.myRating);
+        setRated(true);
+      }
       const history = await apiGet(`/api/orders/${orderId}/messages`);
       setMessages(history.data.messages);
       const offersRes = await apiGet(`/api/orders/${orderId}/offers`);
@@ -122,12 +135,9 @@ const OrderChat = ({ orderId, me, onBack, startCall }) => {
   const acceptOffer = async (offerId) => {
     try {
       await apiPost(`/api/orders/${orderId}/accept`, { offerId });
-      dispatch(
-        notificationActions.addNotification({
-          message: "Отклик принят — водитель назначен",
-          type: "success",
-        })
-      );
+      // The "driver assigned" status notice arrives over the socket; only drop
+      // this order's offer cards so they cannot be accepted a second time
+      dispatch(notificationActions.removeOfferNotices(orderId));
       load();
     } catch (err) {
       setError(err.message);
@@ -536,7 +546,7 @@ const OrderChat = ({ orderId, me, onBack, startCall }) => {
           placeholder={uploading ? "Загрузка..." : "Введите сообщение"}
           disabled={uploading || recording}
         />
-         <button className="press btn-accent shrink-0 w-[3.6rem] h-[3.6rem] rounded-full flex items-center justify-center text-[1.4rem] font-bold disabled:opacity-40" type="submit" disabled={!text.trim() || uploading || recording} aria-label="Отправить"><TaxiIcon name="send" /></button>
+         <button className="press btn-accent shrink-0 w-[3.6rem] h-[3.6rem] rounded-full flex items-center justify-center text-[1.4rem] font-bold disabled:opacity-40" type="submit" onMouseDown={(event) => event.preventDefault()} disabled={!text.trim() || uploading || recording} aria-label="Отправить"><TaxiIcon name="send" /></button>
       </form>
     </div>
   );

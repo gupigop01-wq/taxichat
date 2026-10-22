@@ -23,10 +23,14 @@ const CallModal = ({ call, acceptCall, endCall }) => {
   const [digits, setDigits] = useState("");
 
   useEffect(() => {
-    if (call.remoteStream && audioRef.current) {
-      audioRef.current.srcObject = call.remoteStream;
-      audioRef.current.play().catch(() => {});
-    }
+    const audio = audioRef.current;
+    if (!call.remoteStream || !audio) return undefined;
+    audio.srcObject = call.remoteStream;
+    audio.play().catch(() => {});
+    return () => {
+      audio.pause();
+      audio.srcObject = null;
+    };
   }, [call.remoteStream]);
 
   // Ring while incoming; dial tone while the other side is being called
@@ -35,7 +39,10 @@ const CallModal = ({ call, acceptCall, endCall }) => {
     else if (call.status === "calling" || call.status === "ringing") {
       playDialTone();
       const id = setInterval(playDialTone, 3200);
-      return () => clearInterval(id);
+      return () => {
+        clearInterval(id);
+        stopRingtone();
+      };
     } else stopRingtone();
     return () => stopRingtone();
   }, [call.status, call.whoLabel]);

@@ -54,21 +54,32 @@ const PassengerPanel = ({ me, cityId, cityName, cityNames, refreshMe, startCall 
       // Voice and the on-screen notice come from useOrderNotices; refresh data only
       load();
     };
-    const onMembershipUpdated = () => refreshMe();
+    const onMembershipUpdated = () => refreshMe().catch((err) => {
+      if (err.name !== "AbortError") setError(err.message);
+    });
     socketListen("order:status", onStatusChanged);
     socketListen("membership:updated", onMembershipUpdated);
+    // Events sent while the socket was down are lost: refetch on reconnect
+    socketListen("connect", load);
     return () => {
+      socket.off("connect", load);
       socket.off("order:status", onStatusChanged);
       socket.off("membership:updated", onMembershipUpdated);
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [cityId]);
 
+  // Back from an order: refetch, a missed event must not leave a stale status
+  const closeView = () => {
+    setView(null);
+    load();
+  };
+
   if (view?.type === "order") {
-    return <OrderChat orderId={view.id} me={me} onBack={() => setView(null)} startCall={startCall} />;
+    return <OrderChat orderId={view.id} me={me} onBack={closeView} startCall={startCall} />;
   }
   if (view?.type === "direct") {
-    return <DirectChat chatId={view.id} me={me} onBack={() => setView(null)} />;
+    return <DirectChat chatId={view.id} me={me} onBack={closeView} />;
   }
 
   const submit = async (event) => {
@@ -90,6 +101,8 @@ const PassengerPanel = ({ me, cityId, cityName, cityNames, refreshMe, startCall 
           chatId: directTarget.chatId,
         }),
       });
+      // Close the on-screen keyboard: focus was kept in the field on tap
+      document.activeElement?.blur?.();
       setDirectTarget(null);
       setRoute("");
       setNotes("");
@@ -398,6 +411,9 @@ const PassengerPanel = ({ me, cityId, cityName, cityNames, refreshMe, startCall 
                 !route.trim() || sending ? "opacity-50" : "opacity-100 anim-pulse-ring"
               }`}
               type="submit"
+              // Keep focus in the field on tap: a blur would expand the
+              // keyboard-compact layout, move this button and swallow the click
+              onMouseDown={(event) => event.preventDefault()}
               disabled={!route.trim() || sending}
             >
               {sending ? (

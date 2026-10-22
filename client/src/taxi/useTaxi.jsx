@@ -1,5 +1,5 @@
-import { useEffect, useRef, useState } from "react";
-import { apiGet, apiPost, apiPatch, apiDelete } from "./api";
+import { useCallback, useEffect, useRef, useState } from "react";
+import { apiGet } from "./api";
 import useSocket, { reconnectSocket } from "../hooks/useSocket";
 
 const LAST_CITY_KEY = "bombila.lastCityId";
@@ -24,12 +24,13 @@ const pickInitialCity = (cities, homeCityId) => {
 // Core state of the taxi workspace: the user, his memberships, the selected
 // city and role, zones of the city and live presence
 const useTaxi = () => {
-  const { socketEmit, socketListen, socket } = useSocket();
+  const { socket } = useSocket();
   const [me, setMe] = useState(null);
   const [cities, setCities] = useState([]);
   const [cityId, setCityIdState] = useState(null);
   const [role, setRole] = useState(null);
   const [error, setError] = useState(null);
+  const requestsRef = useRef(null);
 
   // Remember the city the user picked manually
   const setCityId = (id) => {
@@ -37,36 +38,83 @@ const useTaxi = () => {
     setCityIdState(id);
   };
 
-  const refreshMe = async () => {
-    const res = await apiGet("/api/user/me");
+  const refreshMe = useCallback(async () => {
+    const controller = requestsRef.current;
+    if (!controller || controller.signal.aborted) {
+      throw new DOMException("Request cancelled", "AbortError");
+    }
+    const res = await apiGet("/api/user/me", { signal: controller.signal });
+    if (controller.signal.aborted || requestsRef.current !== controller) {
+      throw new DOMException("Request cancelled", "AbortError");
+    }
     setMe(res.data);
     return res.data;
-  };
+  }, []);
 
   useEffect(() => {
-    refreshMe()
+    // A flaky mobile network must not leave the app stuck on "Выберите
+    // город": retry the startup requests with a growing delay
+    const controller = new AbortController();
+    const { signal } = controller;
+    requestsRef.current = controller;
+    const retryTimers = new Map();
+    const waitForRetry = (delay) => new Promise((resolve, reject) => {
+      const id = setTimeout(() => {
+        retryTimers.delete(id);
+        resolve();
+      }, delay);
+      retryTimers.set(id, reject);
+    });
+    const withRetry = async (fn) => {
+      for (let attempt = 0; ; attempt += 1) {
+        if (signal.aborted) throw new DOMException("Request cancelled", "AbortError");
+        try {
+          return await fn();
+        } catch (err) {
+          if (signal.aborted || err.name === "AbortError") throw err;
+          if (attempt >= 5) {
+            setError(err.message);
+            throw err;
+          }
+          await waitForRetry(1000 * 2 ** attempt);
+        }
+      }
+    };
+
+    withRetry(refreshMe)
       .then((data) => {
-        if (data.user._id) {
+        if (!signal.aborted && data.user._id) {
           // The socket may have connected before the cookie was available
           // (anonymous handshake). Reconnect so the server binds the user and
           // joins the membership rooms, then announce online.
           reconnectSocket();
-          socketEmit("user:online", data.user._id);
+          socket.emit("user:online", data.user._id);
         }
       })
-      .catch((err) => setError(err.message));
+      .catch(() => {});
 
-    apiGet("/api/geo/cities")
-      .then((res) => setCities(res.data.cities))
-      .catch((err) => setError(err.message));
+    withRetry(() => apiGet("/api/geo/cities", { signal }))
+      .then((res) => {
+        if (!signal.aborted) setCities(res.data.cities);
+      })
+      .catch(() => {});
 
     // Roles change live: driver application review, waitlist activation
-    const onMembershipUpdated = () => refreshMe();
-    socketListen("membership:updated", onMembershipUpdated);
+    const onMembershipUpdated = () => refreshMe().catch((err) => {
+      if (!signal.aborted && err.name !== "AbortError") setError(err.message);
+    });
+    socket.on("membership:updated", onMembershipUpdated);
     return () => {
+      controller.abort();
+      if (requestsRef.current === controller) requestsRef.current = null;
+      retryTimers.forEach((reject, id) => {
+        clearTimeout(id);
+        reject(new DOMException("Request cancelled", "AbortError"));
+      });
+      retryTimers.clear();
       socket.off("membership:updated", onMembershipUpdated);
     };
-  }, []);
+  }, [refreshMe, socket]);
 
   // Initial city once both the city list and the user are loaded:
   // home city (chosen at registration) -> last manual pick -> first city

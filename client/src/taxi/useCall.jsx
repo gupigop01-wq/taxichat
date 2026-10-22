@@ -6,52 +6,23 @@ import { apiGet } from "./api";
 // Voice calls over WebRTC with the server-side signaling (concept 1.7.1):
 // call:invite -> call:answer -> call:end. Audio only, relay via TURN when
 // configured, so participant IP addresses stay hidden.
-const useCall = () => {
-  const { socketEmit, socketListen, socket } = useSocket();
-  const [call, setCall] = useState({ status: "idle" });
+const getIceConfig = async (orderId, signal) => {
+  try {
+    const res = await apiGet(
+      `/api/calls/ice${orderId ? `?orderId=${orderId}` : ""}`,
+      { signal }
+    );
+    return {
+      iceServers: res.data.iceServers,
+      iceTransportPolicy: res.data.iceTransportPolicy,
+    };
+  } catch (error) {
+    if (signal.aborted) throw error;
+    return { iceServers: [{ urls: "stun:stun.l.google.com:19302" }] };
+  }
+};
 
-  const peerRef = useRef();
-  const streamRef = useRef();
-  const callRef = useRef();
-  const onAckRef = useRef();
-
-  callRef.current = call;
-
-  const stopStream = () => {
-    streamRef.current?.getTracks().forEach((track) => track.stop());
-    streamRef.current = null;
-  };
-
-  const reset = () => {
-    peerRef.current?.destroy();
-    peerRef.current = null;
-    stopStream();
-    setCall({ status: "idle" });
-  };
-
-  const getIceConfig = async (orderId) => {
-    try {
-      const res = await apiGet(
-        `/api/calls/ice${orderId ? `?orderId=${orderId}` : ""}`
-      );
-      return {
-        iceServers: res.data.iceServers,
-        iceTransportPolicy: res.data.iceTransportPolicy,
-      };
-    } catch {
-      return { iceServers: [{ urls: "stun:stun.l.google.com:19302" }] };
-    }
-  };
-
-  const createPeer = async ({ initiator, stream, orderId }) => {
-    const config = await getIceConfig(orderId);
-    const peer = new Peer({ initiator, trickle: false, stream, config });
-    peerRef.current = peer;
-    return peer;
-  };
-
-// Speaker routing: when the browser exposes audio output devices, switch the
-// remote audio element between the earpiece and the loudspeaker.
+// Speaker routing when the browser exposes audio output devices.
 const setSpeakerOutput = async (on) => {
   try {
     const el = document.querySelector("audio[data-call-audio]") ?? document.querySelector("audio");
@@ -62,57 +33,121 @@ const setSpeakerOutput = async (on) => {
     if (pick) await el.setSinkId(pick.deviceId);
   } catch {}
 };
-  const startCall = useCallback(async (options) => {
-    const { kind, target, orderId, cityId, chatId, name, fromRole, onAck } = options;
-    onAckRef.current = onAck;
-    try {
-      setCall({ status: "calling", peerName: name, peerRoleLabel: name, peerEmoji: "🧑‍✈️", kind });
-      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-      streamRef.current = stream;
 
-      const peer = await createPeer({ initiator: true, stream, orderId });
+const useCall = () => {
+  const { socket } = useSocket();
+  const [call, setCall] = useState({ status: "idle" });
+  const callRef = useRef(call);
+  const sessionRef = useRef(null);
+  const mountedRef = useRef(false);
+
+  const updateCall = useCallback((next) => {
+    callRef.current = typeof next === "function" ? next(callRef.current) : next;
+    if (mountedRef.current) setCall(callRef.current);
+  }, []);
+
+  const finishCall = useCallback((next = { status: "idle" }, reason) => {
+    const current = callRef.current;
+    const session = sessionRef.current;
+    sessionRef.current = null;
+    // Abort invalidates pending microphone/ICE work and every peer callback.
+    session?.controller.abort();
+    session?.stream?.getTracks().forEach((track) => track.stop());
+    session?.peer?.destroy();
+    updateCall(next);
+    if (reason && current.callId) socket.emit("call:end", { callId: current.callId, reason });
+  }, [socket, updateCall]);
+
+  const fail = useCallback((error) => {
+    const current = callRef.current;
+    finishCall({
+      status: "failed",
+      error: error?.message ?? error ?? "Звонок не состоялся",
+      peerName: current.peerName,
+      peerRoleLabel: current.peerRoleLabel,
+    }, "cancel");
+  }, [finishCall]);
+
+  const createPeer = useCallback(async (session, { initiator, orderId }) => {
+    const { signal } = session.controller;
+    if (signal.aborted) return null;
+    const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+    if (signal.aborted) {
+      stream.getTracks().forEach((track) => track.stop());
+      return null;
+    }
+    session.stream = stream;
+    const config = await getIceConfig(orderId, signal);
+    if (signal.aborted) return null;
+    const peer = new Peer({ initiator, trickle: false, stream, config });
+    session.peer = peer;
+    peer.on("error", (error) => {
+      if (!signal.aborted) fail(error);
+    });
+    peer.on("close", () => {
+      if (!signal.aborted) finishCall(undefined, "hangup");
+    });
+    peer.on("stream", (remoteStream) => {
+      if (!signal.aborted) updateCall((prev) => ({ ...prev, status: "active", remoteStream }));
+    });
+    return peer;
+  }, [fail, finishCall, updateCall]);
+
+  const startCall = useCallback(async (options) => {
+    if (!mountedRef.current || callRef.current.status !== "idle") return;
+    const { kind, target, orderId, cityId, chatId, name, fromRole, onAck } = options;
+    const session = { controller: new AbortController(), target };
+    sessionRef.current = session;
+    const { signal } = session.controller;
+    updateCall({ status: "calling", peerName: name, peerRoleLabel: name, peerEmoji: "🧑‍✈️", kind, orderId, chatId });
+    try {
+      const peer = await createPeer(session, { initiator: true, orderId });
+      if (!peer || signal.aborted) return;
 
       peer.on("signal", (signalData) => {
-        socketEmit(
+        if (signal.aborted) return;
+        socket.emit(
           "call:invite",
           { kind, target, orderId, cityId, chatId, fromRole, signalData },
           (ack) => {
-            if (ack?.error) {
-              // Keep the failure on screen until the user closes the call panel
-              stopStream();
-              setCall({ status: "failed", error: ack.error, peerName: name });
+            if (signal.aborted) {
+              // An invite already sent to the server may finish after hangup.
+              if (ack?.callId) socket.emit("call:end", { callId: ack.callId, reason: "cancel" });
+              return;
+            }
+            if (ack?.error || !ack?.callId) {
+              fail(ack?.error ?? "Не удалось начать звонок");
             } else {
-              setCall((prev) => ({
+              updateCall((prev) => ({
                 ...prev,
-                status: "ringing",
+                status: prev.status === "active" ? "active" : "ringing",
                 callId: ack.callId,
-                chatId: ack.chatId,
-                orderId: ack.orderId,
-                audioTracks: streamRef.current?.getAudioTracks?.() ?? [],
+                chatId: ack.chatId ?? prev.chatId,
+                orderId: ack.orderId ?? prev.orderId,
+                audioTracks: session.stream?.getAudioTracks?.() ?? [],
                 speakerSink: setSpeakerOutput,
               }));
-              onAckRef.current?.({ callId: ack.callId, chatId: ack.chatId });
+              onAck?.({ callId: ack.callId, chatId: ack.chatId });
             }
           }
         );
       });
-
-      peer.on("stream", (remoteStream) => {
-        setCall((prev) => ({ ...prev, remoteStream }));
-      });
     } catch (error) {
-      stopStream();
-      setCall({ status: "failed", error: error.message });
+      if (!signal.aborted) fail(error);
     }
-  }, [socketEmit]);
+  }, [createPeer, fail, socket, updateCall]);
 
   useEffect(() => {
-    const onInvite = async ({ callId, orderId, chatId, kind, from, fromName, fromRole, signalData }) => {
+    mountedRef.current = true;
+    const matchesCall = (payload) => Boolean(callRef.current.callId) &&
+      String(payload?.callId) === String(callRef.current.callId);
+    const onInvite = ({ callId, orderId, chatId, kind, from, fromName, fromRole, signalData }) => {
       if (callRef.current.status !== "idle") {
-        socketEmit("call:end", { callId, reason: "decline" });
+        socket.emit("call:end", { callId, reason: "decline" });
         return;
       }
-      setCall({
+      sessionRef.current = { controller: new AbortController(), target: from };
+      updateCall({
         status: "incoming",
         callId,
         orderId,
@@ -127,73 +162,88 @@ const setSpeakerOutput = async (on) => {
       });
     };
 
-    const onAnswer = ({ signalData }) => {
-      peerRef.current?.signal(signalData);
-      setCall((prev) => ({ ...prev, status: "active" }));
+    const onAnswer = (payload) => {
+      const session = sessionRef.current;
+      if (!matchesCall(payload) || !session?.peer) return;
+      try {
+        session.peer.signal(payload.signalData);
+        if (!session.controller.signal.aborted) updateCall((prev) => ({ ...prev, status: "active" }));
+      } catch (error) {
+        fail(error);
+      }
     };
 
-    const onIce = ({ candidate }) => {
-      peerRef.current?.signal(candidate);
+    const onIce = (payload) => {
+      if (!matchesCall(payload) || !sessionRef.current?.peer) return;
+      try {
+        sessionRef.current.peer.signal(payload.candidate);
+      } catch (error) {
+        fail(error);
+      }
     };
 
-    const onEnd = () => {
-      reset();
+    const onEnd = (payload) => {
+      if (matchesCall(payload)) finishCall();
     };
 
-    const onBusy = ({ error }) => {
-      stopStream();
-      setCall({ status: "failed", error });
+    const onBusy = (payload) => {
+      const session = sessionRef.current;
+      if (!session || (payload?.target && String(payload.target) !== String(session.target))) return;
+      if (payload?.callId && !matchesCall(payload)) return;
+      fail(payload?.error);
+    };
+    const onError = (payload) => {
+      if (matchesCall(payload)) fail(payload?.error);
     };
 
-    socketListen("call:invite", onInvite);
-    socketListen("call:answer", onAnswer);
-    socketListen("call:ice", onIce);
-    socketListen("call:end", onEnd);
-    socketListen("call:busy", onBusy);
+    socket.on("call:invite", onInvite);
+    socket.on("call:answer", onAnswer);
+    socket.on("call:ice", onIce);
+    socket.on("call:end", onEnd);
+    socket.on("call:busy", onBusy);
+    socket.on("call:error", onError);
 
     return () => {
+      mountedRef.current = false;
       socket.off("call:invite", onInvite);
       socket.off("call:answer", onAnswer);
       socket.off("call:ice", onIce);
       socket.off("call:end", onEnd);
       socket.off("call:busy", onBusy);
+      socket.off("call:error", onError);
+      finishCall(undefined, "cancel");
     };
-  }, [socket, socketListen]);
+  }, [fail, finishCall, socket, updateCall]);
 
   const acceptCall = async () => {
     const current = callRef.current;
-    setCall((prev) => ({ ...prev, status: "connecting" }));
-    const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-    streamRef.current = stream;
+    const session = sessionRef.current;
+    if (!mountedRef.current || current.status !== "incoming" || !session) return;
+    const { signal } = session.controller;
+    updateCall((prev) => ({ ...prev, status: "connecting" }));
+    try {
+      const peer = await createPeer(session, { initiator: false, orderId: current.orderId });
+      if (!peer || signal.aborted) return;
+      peer.on("signal", (signalData) => {
+        if (!signal.aborted) socket.emit("call:answer", { callId: current.callId, signalData });
+      });
 
-    const peer = await createPeer({
-      initiator: false,
-      stream,
-      orderId: current.orderId,
-    });
-    peer.on("signal", (signalData) => {
-      socketEmit("call:answer", { callId: current.callId, signalData });
-    });
-    peer.on("stream", (remoteStream) => {
-      setCall((prev) => ({ ...prev, status: "active", remoteStream }));
-    });
-
-    peer.signal(current.signalData);
-    setCall((prev) => ({
-      ...prev,
-      status: "active",
-      accepted: true,
-      audioTracks: streamRef.current?.getAudioTracks?.() ?? [],
-      speakerSink: setSpeakerOutput,
-    }));
+      peer.signal(current.signalData);
+      if (signal.aborted) return;
+      updateCall((prev) => ({
+        ...prev,
+        status: "active",
+        accepted: true,
+        audioTracks: session.stream?.getAudioTracks?.() ?? [],
+        speakerSink: setSpeakerOutput,
+      }));
+    } catch (error) {
+      if (!signal.aborted) fail(error);
+    }
   };
 
   const endCall = (reason = "hangup") => {
-    const current = callRef.current;
-    if (current.callId) {
-      socketEmit("call:end", { callId: current.callId, reason });
-    }
-    reset();
+    finishCall(undefined, reason);
   };
 
   return { call, startCall, acceptCall, endCall };
