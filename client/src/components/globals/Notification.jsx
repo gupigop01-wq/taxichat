@@ -140,10 +140,10 @@ export function NotificationItem({ item, onDismiss }) {
           {carCaption && <div className="break-words"><TaxiIcon name="road" className="inline-block align-[-0.2em]" /> {carCaption}</div>}
         </div>
         <div className="grid grid-cols-2 gap-2">
-          <button onClick={() => onDismiss(item.id)} className="rounded-xl py-2 bg-white/10 border border-white/10">
+          <button onClick={() => onDismiss(item.id)} data-testid="notice-decline" className="rounded-xl py-2 bg-white/10 border border-white/10">
             Отказаться
           </button>
-          <button onClick={accept} className="rounded-xl py-2 btn-accent font-bold">
+          <button onClick={accept} data-testid="notice-accept" className="rounded-xl py-2 btn-accent font-bold">
             Принять
           </button>
         </div>

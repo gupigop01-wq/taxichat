@@ -2,6 +2,11 @@ import { useSelector } from "react-redux";
 import { io } from "socket.io-client";
 
 const socket = io();
+// Debug-only: inspectable from DevTools. Cracket up in dev builds only —
+// in production builds NODE_ENV is inlined and this branch is eliminated.
+if (typeof window !== "undefined" && process.env.NODE_ENV === "development") {
+  window.__bombilaSocket = socket;
+}
 
 // Rejoin the membership rooms on every (re)connection: after a sleep or a
 // network switch the server forgets the room membership, and without

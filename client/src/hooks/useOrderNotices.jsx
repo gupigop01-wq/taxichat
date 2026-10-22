@@ -36,9 +36,21 @@ const useOrderNotices = ({ role, userId }) => {
       if (["driver", "dispatcher", "region_admin"].includes(roleRef.current)) show(newOrderNotice());
     };
     const onOffer = (payload) => {
-      if (roleRef.current === "passenger") showOnce(`offer:${payload?.orderId}:${payload?.offerId}`, newOfferNotice(payload));
+      if (roleRef.current === "passenger") {
+        if (process.env.NODE_ENV === "development") {
+          (window.__noticeLog = window.__noticeLog || []).push({ event: "order:offer", offer: payload?.offerId, role: roleRef.current });
+        }
+        showOnce(`offer:${payload?.orderId}:${payload?.offerId}`, newOfferNotice(payload));
+      }
     };
     const onStatus = (payload) => {
+      if (process.env.NODE_ENV === "development") {
+        (window.__noticeLog = window.__noticeLog || []).push({
+          event: "order:status", status: payload?.status, scope: payload?.scope,
+          me: String(userRef.current ?? ""), passengerId: payload?.passengerId, driverId: payload?.driverId,
+          eventId: payload?.eventId, role: roleRef.current,
+        });
+      }
       if (payload?.orderId && payload?.status && payload.status !== "PUBLISHED") {
         dispatch(notificationActions.removeOfferNotices(payload.orderId));
       }
