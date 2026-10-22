@@ -122,7 +122,15 @@ export function NotificationItem({ item, onDismiss }) {
         // "driver assigned" status notice comes over the socket
         window.dispatchEvent(new CustomEvent("bombila:open-order", { detail: { orderId } }));
       } catch (err) {
-        dispatch(notificationActions.addNotification({ message: `⚠️ ${err.message}`, type: "error" }));
+        // Final rejections (taken driver, handled offer, missing order) close
+        // the card; transient failures (network) keep it for another try.
+        if ([404, 409, 410].includes(Number(err?.status))) onDismiss(item.id);
+        dispatch(notificationActions.addNotification({
+          message: `⚠️ ${err.message ?? "Не удалось принять отклик"}`,
+          speakText: `Невозможно принять. ${err.message ?? ""}`,
+          type: "error",
+          speak: true,
+        }));
       }
     };
     return (
