@@ -206,6 +206,22 @@ docker compose up -d --build   # app (:4000) + mongo + coturn
 `CLOUDINARY_NAME/API_KEY/API_SECRET`, `TURN_URL`/`TURN_SECRET` (переменные
 подхватываются compose). Клиент собирается внутри образа и раздаётся API-сервером.
 
+### Медиа (фото и голосовые в чатах)
+
+Загрузка идёт через `POST /api/upload`, отдача — `GET /api/uploads/:file`
+(только для участников чата). Два режима:
+
+- **Cloudinary настроен** (`CLOUDINARY_NAME/API_KEY/API_SECRET`) — файлы
+  загружаются туда, клиент получает привычные Cloudinary-ссылки.
+- **Ключей нет** (например, локальная разработка) — файлы пишутся в каталог
+  `UPLOAD_DIR` (по умолчанию `<repo>/uploads`) и раздаются API-сервером
+  локально. В `NODE_ENV=production` без ключей загрузка возвращает 503, чтобы
+  не терять файлы молча. Каталог `uploads/` в `.gitignore`; на проде без
+  Cloudinary сохраняйте его на постоянном томе.
+
+Ограничения: фото до 10 МБ (уменьшение до 400×400), голосовые до 15 МБ; MIME
+определяется по содержимому (WebM/OGG/MP4/MP3/WAV), типы строго из allowlist.
+
 ### PaaS (Render / Railway / Fly.io)
 
 1. MongoDB — бесплатный кластер MongoDB Atlas; скопируйте `MONGO_URI`.
