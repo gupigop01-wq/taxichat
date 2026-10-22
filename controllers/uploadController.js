@@ -5,7 +5,7 @@ const catchAsyncError = require("../utilities/catchAsyncError");
 const ApiError = require("../utilities/errors");
 const { cloudinary } = require("../utilities/Cloudinary");
 
-const uploadDirectory = path.join(__dirname, "..", "uploads");
+const uploadDirectory = path.resolve(process.env.UPLOAD_DIR || path.join(__dirname, "..", "uploads"));
 const formats = {
   image: {
     jpeg: { extension: "jpg", mime: "image/jpeg" },
@@ -36,16 +36,26 @@ const detectAudioFormat = (content, declared) => {
 };
 
 exports.upload = catchAsyncError(async (req, res) => {
-  const { data, fileType } = req.body;
-  const match = typeof data === "string" && /^data:([^;,]+)(?:;codecs=[^;,]+)?;base64,([A-Za-z0-9+/]+={0,2})$/.exec(data);
-  const subtype = match?.[1].split("/")[1];
-  let format = formats[fileType]?.[subtype];
-  if (!format || !match[1].startsWith(fileType === "image" ? "image/" : "audio/")) {
+  const { data, fileType } = req.body ?? {};
+  const match = typeof data === "string"
+    ? /^data:([^;,]+)(?:;codecs=[^;,]+)?;base64,([A-Za-z0-9+/]*={0,2})$/i.exec(data)
+    : null;
+  const mime = match?.[1].toLowerCase().replace(/^audio\/mp3$/, "audio/mpeg");
+  const subtype = mime?.split("/")[1];
+  const group = typeof fileType === "string" && Object.hasOwn(formats, fileType) ? formats[fileType] : null;
+  let format = group && Object.hasOwn(group, subtype) ? group[subtype] : null;
+  if (!format || mime !== format.mime) {
     throw new ApiError(400, "Неподдерживаемый формат файла");
+  }
+  if (match[2].length % 4 !== 0) {
+    throw new ApiError(400, "Некорректные данные файла");
   }
   const content = Buffer.from(match[2], "base64");
   if (!content.length || content.length > (fileType === "image" ? 10 : 15) * 1024 * 1024) {
     throw new ApiError(413, "Файл пустой или слишком большой");
+  }
+  if (content.toString("base64") !== match[2]) {
+    throw new ApiError(400, "Некорректные данные файла");
   }
   if (fileType === "video") format = detectAudioFormat(content, format);
 

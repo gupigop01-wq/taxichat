@@ -8,7 +8,7 @@ function AttachFileModal() {
   const { sendMessage } = useSendMessage();
   const { handleFileUpload } = useUpload(
     (uploadData) => {
-      sendMessage({ url: uploadData.public_id });
+      sendMessage({ url: uploadData.public_id ?? uploadData.secure_url });
     },
     ["Image"]
   );

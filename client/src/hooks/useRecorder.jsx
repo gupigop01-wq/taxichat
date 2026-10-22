@@ -16,7 +16,7 @@ const useRecorder = ({ currentChatRoom }) => {
 
   const { handleFileUpload } = useUpload(
     (uploadData) => {
-      sendMessage({ url: uploadData.public_id, ...uploadData.extraFileData });
+      sendMessage({ url: uploadData.public_id ?? uploadData.secure_url, ...uploadData.extraFileData });
     },
     ["audio"]
   );
@@ -50,9 +50,8 @@ const useRecorder = ({ currentChatRoom }) => {
     video: false,
     audio: true,
     askPermissionOnMount: true,
-    blobPropertyBag: {
-      type: "audio/mp3",
-    },
+    // Keep the actual recorder MIME instead of relabeling WebM/MP4 as MP3.
+    blobPropertyBag: {},
     onStop: (_, Blob) => {
       setBlob(Blob);
       dispatch(chatActions.setMode({ mode: "sending" }));

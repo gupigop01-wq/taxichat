@@ -25,7 +25,7 @@ function Settings() {
 
   const { handleFileUpload, fileUploadState } = useUpload(
     (uploadData) => {
-      updateProfile({ avatar: uploadData.public_id });
+      updateProfile({ avatar: uploadData.public_id ?? uploadData.secure_url });
     },
     ["Image"]
   );

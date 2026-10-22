@@ -24,17 +24,18 @@ const useUpload = (fn, formatsAllowed) => {
   //   Handle file being added to form
   const handleFileUpload = (event) => {
     // Get file
-    const file = event.target.files[0];
+    const file = event.target.files?.[0];
+    if (!file) return;
 
     setExtraFileData(event.target.extraFileData);
 
-    // Restrict to only files less than 50mb
-    const limit = 51200000;
+    const fileTypeStr = file.type.split("/")[0].toLowerCase();
+    const limit = (fileTypeStr === "image" ? 10 : 15) * 1024 * 1024;
 
-    if (file.size > limit) {
+    if (!file.size || file.size > limit) {
       dispatch(
         notificationActions.addNotification({
-          message: "Файл слишком большой",
+          message: "Файл пустой или слишком большой",
           type: "error",
         })
       );
@@ -64,7 +65,6 @@ const useUpload = (fn, formatsAllowed) => {
       return;
     }
 
-    const fileTypeStr = file.type.split("/")[0].toLowerCase();
     setFileType(fileTypeStr);
     dispatch(chatActions.setMode({ mode: `${fileTypeStr}Upload` }));
 

@@ -1,10 +1,11 @@
 // Legacy chat messages are stored as HTML from a contentEditable input
 // (text, line breaks and emoji <img>). Render only that safe subset: unknown
-// tags are unwrapped to text, every attribute except img src/class is dropped.
+// tags are unwrapped after cleaning their descendants; every attribute except
+// img src/class is dropped.
 const ALLOWED_TAGS = new Set(["BR", "DIV", "P", "SPAN", "B", "I", "STRONG", "EM", "IMG"]);
 const SAFE_SRC = /^(https?:\/\/|\/(?!\/)|data:image\/(png|gif|jpe?g|webp);)/i;
 
-const cleanNode = (node, doc) => {
+const cleanNode = (node) => {
   for (const child of Array.from(node.childNodes)) {
     if (child.nodeType === 3) continue; // text
     if (child.nodeType !== 1) {
@@ -13,7 +14,8 @@ const cleanNode = (node, doc) => {
     }
 
     if (!ALLOWED_TAGS.has(child.tagName)) {
-      child.replaceWith(doc.createTextNode(child.textContent ?? ""));
+      cleanNode(child);
+      child.replaceWith(...child.childNodes);
       continue;
     }
 
@@ -28,13 +30,13 @@ const cleanNode = (node, doc) => {
       continue;
     }
 
-    cleanNode(child, doc);
+    cleanNode(child);
   }
 };
 
 export default function sanitizeMessageHtml(html) {
   if (typeof html !== "string" || !html) return "";
   const doc = new DOMParser().parseFromString(`<body>${html}</body>`, "text/html");
-  cleanNode(doc.body, doc);
+  cleanNode(doc.body);
   return doc.body.innerHTML;
 }

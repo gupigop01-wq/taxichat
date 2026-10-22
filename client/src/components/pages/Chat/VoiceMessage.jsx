@@ -84,6 +84,16 @@ function VoiceMessage({
     setCurrentDuration();
   };
 
+  const isDirectUrl = typeof voiceNoteUrl === "string" && /^(https?:\/\/|\/(?![\\/]))/i.test(voiceNoteUrl);
+  const audioProps = {
+    className: "hidden",
+    id: "audioRef",
+    onTimeUpdate: handleTimeUpdate,
+    onCanPlayThrough: handleCanPlayThrough,
+    onEnded: handleEnding,
+    controlsList: "nodownload",
+  };
+
   return (
     <div
       className={`flex rounded-3xl  ${
@@ -94,19 +104,18 @@ function VoiceMessage({
     >
       {/* Audio Player */}
       <div className="flex items-center w-full">
-        <Audio
-          sourceTypes={["wav", "mp3"]}
-          fallback="Cannot play audio"
-          cloudName={process.env.REACT_APP_CLOUDINARY_NAME}
-          publicId={voiceNoteUrl}
-          className="hidden"
-          id="audioRef"
-          onTimeUpdate={handleTimeUpdate}
-          onCanPlayThrough={handleCanPlayThrough}
-          onEnded={handleEnding}
-          controlsList="nodownload"
-          innerRef={audioRef}
-        />
+        {isDirectUrl ? (
+          <audio {...audioProps} src={voiceNoteUrl} ref={audioRef} />
+        ) : (
+          <Audio
+            {...audioProps}
+            sourceTypes={["wav", "mp3"]}
+            fallback="Cannot play audio"
+            cloudName={process.env.REACT_APP_CLOUDINARY_NAME}
+            publicId={voiceNoteUrl}
+            innerRef={audioRef}
+          />
+        )}
         {/* Play and pause Icon */}
         <CTAIconWrapper
           onClick={() => (playing ? pauseVoiceMessage() : playVoiceMessage())}
