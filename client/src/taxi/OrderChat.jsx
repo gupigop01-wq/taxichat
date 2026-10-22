@@ -75,20 +75,28 @@ const OrderChat = ({ orderId, me, onBack, startCall }) => {
     };
   }, [orderId]);
 
+  // Status events fan out to several subscribers; parallel refreshes can
+  // resolve out of order and overwrite fresh state with a stale snapshot.
+  // Only the latest load() is allowed to commit its result.
+  const loadSeq = useRef(0);
   const load = async () => {
+    const seq = ++loadSeq.current;
     try {
       const res = await apiGet(`/api/orders/${orderId}`);
+      if (seq !== loadSeq.current) return;
       setOrder(res.data.order);
       if (res.data.order.myRating) {
         setStars(res.data.order.myRating);
         setRated(true);
       }
       const history = await apiGet(`/api/orders/${orderId}/messages`);
+      if (seq !== loadSeq.current) return;
       setMessages(history.data.messages);
       const offersRes = await apiGet(`/api/orders/${orderId}/offers`);
+      if (seq !== loadSeq.current) return;
       setOffers(offersRes.data.offers);
     } catch (err) {
-      setError(err.message);
+      if (seq === loadSeq.current) setError(err.message);
     }
   };
 

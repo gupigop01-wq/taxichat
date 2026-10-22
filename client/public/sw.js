@@ -1,6 +1,6 @@
 // Bombila service worker: web push with buttons (Android), tap-to-open on iOS,
 // offline shell caching, and passing the tap text back to the app for TTS.
-const CACHE = "bombila-shell-v1";
+const CACHE = "bombila-shell-v2";
 const SHELL = ["/", "/manifest.webmanifest", "/icons/icon-192.png", "/icons/icon-512.png", "/icons/badge-72.png"];
 
 self.addEventListener("install", (event) => {
@@ -18,10 +18,14 @@ self.addEventListener("activate", (event) => {
 });
 
 // App shell: network first for navigations (fresh JSX bundle after deploys),
-// cache fallback when offline; cache-first for same-origin static assets.
+// cache fallback when offline; cache-first for same-origin static assets only.
+// API responses must never be cached: every list/order/chat read is live data.
 self.addEventListener("fetch", (event) => {
   const request = event.request;
-  if (request.method !== "GET" || new URL(request.url).origin !== self.location.origin) return;
+  const url = new URL(request.url);
+  if (request.method !== "GET" || url.origin !== self.location.origin) return;
+  // Live API and media: always straight to the network, never the cache
+  if (url.pathname.startsWith("/api/")) return;
   if (request.headers.get("accept")?.includes("text/html")) {
     event.respondWith(
       fetch(request)
@@ -134,3 +138,4 @@ self.addEventListener("notificationclick", (event) => {
 
   event.waitUntil(focusOrOpen);
 });
+

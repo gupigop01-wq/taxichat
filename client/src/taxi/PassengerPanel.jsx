@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useDispatch } from "react-redux";
 import { notificationActions } from "../store/notificationSlice";
 import { apiGet, apiPost, apiDelete } from "./api";
@@ -35,9 +35,14 @@ const PassengerPanel = ({ me, cityId, cityName, cityNames, refreshMe, startCall 
   const [timeOpen, setTimeOpen] = useState(false);
   const [sending, setSending] = useState(false);
 
+  // Status events reach several subscribers at once; keep only the newest
+  // response so a slow one cannot overwrite a fresher list.
+  const loadSeq = useRef(0);
   const load = async () => {
+    const seq = ++loadSeq.current;
     try {
       const ordersRes = await apiGet(`/api/orders?cityId=${cityId}`);
+      if (seq !== loadSeq.current) return;
       setOrders(ordersRes.data.orders);
       const driversRes = await apiGet(`/api/cities/${cityId}/free-drivers`);
       setDrivers(driversRes.data.drivers);
@@ -438,3 +443,4 @@ const PassengerPanel = ({ me, cityId, cityName, cityNames, refreshMe, startCall 
 };
 
 export default PassengerPanel;
+
