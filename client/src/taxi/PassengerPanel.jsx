@@ -34,6 +34,9 @@ const PassengerPanel = ({ me, cityId, cityName, cityNames, refreshMe, startCall 
   const [whenAt, setWhenAt] = useState(defaultScheduledAt());
   const [timeOpen, setTimeOpen] = useState(false);
   const [sending, setSending] = useState(false);
+  // Composer is collapsed by default: the form opens on tap and folds back
+  // once the order is created (or the user closes it)
+  const [composerOpen, setComposerOpen] = useState(false);
 
   // Status events reach several subscribers at once; keep only the newest
   // response so a slow one cannot overwrite a fresher list.
@@ -114,6 +117,7 @@ const PassengerPanel = ({ me, cityId, cityName, cityNames, refreshMe, startCall 
       setWhenType("now");
       setWhenAt(defaultScheduledAt());
       setTab("orders");
+      setComposerOpen(false);
       dispatch(
         notificationActions.addNotification({
           message:
@@ -332,12 +336,48 @@ const PassengerPanel = ({ me, cityId, cityName, cityNames, refreshMe, startCall 
         )}
       </div>
 
-      {/* Нижний композер заказа */}
-      {tab === "new" && (
+      {/* Нижний композер заказа: свёрнут по умолчанию, раскрывается по кнопке */}
+      {tab === "new" && !composerOpen && (
+        <div className="shrink-0 px-3 pb-3 safe-area-bottom">
+          <button
+            type="button"
+            className="press w-full btn-accent rounded-2xl min-h-[5.2rem] px-4 flex items-center justify-between gap-3 font-display font-extrabold text-[1.5rem]"
+            onClick={() => setComposerOpen(true)}
+            aria-expanded={false}
+            aria-controls="order-composer"
+          >
+            <span className="flex items-center gap-2">
+              <TaxiIcon name="route" size={22} />
+              Новый заказ
+            </span>
+            <TaxiIcon name="up" size={20} />
+          </button>
+        </div>
+      )}
+
+      {tab === "new" && composerOpen && (
         <form
+          id="order-composer"
           className="shrink-0 glass-strong rounded-t-3xl p-3 space-y-2.5 safe-area-bottom anim-sheet"
           onSubmit={submit}
         >
+          <div className="flex items-center justify-between gap-2">
+            <button
+              type="button"
+              className="press px-2 py-1 rounded-xl text-secondary-text flex items-center gap-1.5 text-[1.3rem]"
+              onClick={() => {
+                document.activeElement?.blur?.();
+                setComposerOpen(false);
+              }}
+              aria-expanded
+              aria-controls="order-composer"
+            >
+              <TaxiIcon name="down" size={18} /> Свернуть
+            </button>
+            {whenType === "now" && (
+              <span className="text-[1.2rem] text-secondary-text">Подача: сейчас</span>
+            )}
+          </div>
           {directTarget && (
             <div className="text-xs text-secondary-text text-center bg-primary rounded-lg p-2">
               Прямой заказ водителю {directTarget.driverName ?? directTarget.driverId}
@@ -443,4 +483,5 @@ const PassengerPanel = ({ me, cityId, cityName, cityNames, refreshMe, startCall 
 };
 
 export default PassengerPanel;
+
 
