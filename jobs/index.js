@@ -11,8 +11,7 @@ const scheduleOrderJobs = async (order) => {
   if (!agenda) return;
 
   if (order.when?.type === "scheduled" && order.when?.at) {
-    // Предзаказ опубликован сразу; за указанное время до поездки приходит
-    // напоминание, а в само время — попытка активации брони
+    // Activate or fan out at the lead time; remind assigned drivers at T-10.
     const leadMinutes = 30;
     const city = await require("../models/City").findById(order.cityId).select("settings");
     const lead = (city?.settings?.preorderLeadMinutes ?? leadMinutes) * 60 * 1000;
@@ -81,6 +80,16 @@ const scheduleWaitingTimer = async (order, waitingMinutes) => {
   );
 };
 
+// Booking can happen after the lead-time activation job has already run.
+const scheduleBookingActivation = async (order) => {
+  if (!agenda || order.when?.type !== "scheduled" || !order.when?.at) return;
+  await agenda.schedule(
+    new Date(Math.max(Date.now(), new Date(order.when.at).getTime())),
+    "preorder:activate",
+    { orderId: String(order._id), bookingOnly: true }
+  );
+};
+
 const initJobs = async (mongoUri) => {
   agenda = new Agenda({
     db: { address: mongoUri, collection: "agendaJobs" },
@@ -118,4 +127,11 @@ const initJobs = async (mongoUri) => {
 
 const getAgenda = () => agenda;
 
-module.exports = { initJobs, getAgenda, scheduleOrderJobs, scheduleCascade, scheduleWaitingTimer };
+module.exports = {
+  initJobs,
+  getAgenda,
+  scheduleOrderJobs,
+  scheduleCascade,
+  scheduleWaitingTimer,
+  scheduleBookingActivation,
+};

@@ -112,16 +112,25 @@ const runWaitingTimeout = async ({ orderId }) => {
 };
 
 // Scheduled order time has come: activate a booking or publish a draft
-const runPreorderActivate = async ({ orderId }) => {
+const runPreorderActivate = async ({ orderId, bookingOnly = false }) => {
   const order = await Order.findById(orderId).populate("cityId", "settings");
   if (!order || order.when?.type !== "scheduled") return;
 
   // Бронь активируется: водитель приступает к заказу
   if (order.status === "BOOKED") {
-    const { events } = await transition(order, "activate", SYSTEM_ACTOR);
-    emitOrderEvents(events);
+    try {
+      const { events } = await transition(order, "activate", SYSTEM_ACTOR);
+      emitOrderEvents(events);
+    } catch (error) {
+      // A manual activation or the other activation job may have won.
+      if (
+        error.statusCode !== 409 ||
+        (await Order.findById(orderId).select("status"))?.status === "BOOKED"
+      ) throw error;
+    }
     return;
   }
+  if (bookingOnly) return;
 
   // Совместимость: черновик публикуется
   if (order.status === "DRAFT") {

@@ -1,6 +1,15 @@
 const http = require("http");
 const request = require("supertest");
 const { io: ioClient } = require("socket.io-client");
+
+// Agenda connects in its constructor, before start(); never construct it here.
+jest.mock("agenda", () => jest.fn().mockImplementation(() => ({
+  define: jest.fn(),
+  start: jest.fn().mockResolvedValue(),
+  every: jest.fn().mockResolvedValue(),
+  schedule: jest.fn().mockResolvedValue(),
+})));
+
 const app = require("../app");
 const initSocket = require("../socket");
 const City = require("../models/City");
@@ -284,19 +293,20 @@ describe("Ratings", () => {
 });
 
 describe("Preorder scheduling", () => {
+  let agenda;
+
+  beforeEach(async () => {
+    agenda = await require("../jobs/index").initJobs("mongodb://unused/test");
+  });
+
+  afterEach(() => {
+    jest.restoreAllMocks();
+  });
+
   it("activation comes before the reminder and an unbooked preorder expires", async () => {
     const jobs = require("../jobs/index");
     const scheduled = [];
-
-    // scheduleOrderJobs uses the module-level agenda: boot it with the job
-    // runner stubbed out and record what gets scheduled
-    const Agenda = require("agenda");
-    jest.spyOn(Agenda.prototype, "start").mockResolvedValue();
-    jest.spyOn(Agenda.prototype, "every").mockResolvedValue();
-    jest
-      .spyOn(Agenda.prototype, "schedule")
-      .mockImplementation(async (at, name, data) => scheduled.push({ at, name, data }));
-    await jobs.initJobs("mongodb://127.0.0.1:27017/unused");
+    agenda.schedule.mockImplementation(async (at, name, data) => scheduled.push({ at, name, data }));
 
     const city = await City.create({ name: "Город предзаказа", oktmo: "97" + Date.now() });
     const whenAt = new Date(Date.now() + 3 * 60 * 60 * 1000);
@@ -310,8 +320,67 @@ describe("Preorder scheduling", () => {
     expect(byName["preorder:activate"]).toBeLessThan(byName["preorder:reminder"]);
     expect(byName["preorder:reminder"]).toBeLessThan(whenAt.getTime());
     expect(byName["order:expire"]).toBeGreaterThan(whenAt.getTime());
+    expect(require("agenda")).toHaveBeenCalledWith(expect.objectContaining({
+      db: { address: "mongodb://unused/test", collection: "agendaJobs" },
+    }));
+  });
 
-    jest.restoreAllMocks();
-    await jobs.getAgenda().stop?.();
+  it.each([-25, 5])("a booking at offset %i minutes gets a final activation opportunity", async (offsetMinutes) => {
+    const world = await setupPilotCity(app);
+    const handlers = require("../jobs/handlers");
+    const Chat = require("../models/Chat");
+    const whenAt = new Date(Date.now() + 3 * 60 * 60 * 1000);
+    const created = await createOrder(app, world.passenger, world.city, {
+      whenType: "scheduled",
+      whenAt: whenAt.toISOString(),
+    });
+    expect(created.status).toBe(201);
+    const orderId = created.body.data.order._id;
+    const leadJob = agenda.schedule.mock.calls.find(
+      ([, name, data]) => name === "preorder:activate" && data.orderId === orderId
+    );
+    expect(leadJob[0].getTime()).toBe(whenAt.getTime() - 30 * 60 * 1000);
+    await handlers.runPreorderActivate(leadJob[2]);
+
+    const bookingTime = whenAt.getTime() + offsetMinutes * 60 * 1000;
+    jest.spyOn(Date, "now").mockReturnValue(bookingTime);
+    const booked = await request(app)
+      .post(`/api/orders/${orderId}/book`)
+      .set("Cookie", world.drivers[0].cookie);
+    expect(booked.status).toBe(200);
+    expect(booked.body.data.order.status).toBe("BOOKED");
+    const finalJob = agenda.schedule.mock.calls.find(
+      ([, name, data]) => name === "preorder:activate" && data.orderId === orderId && data.bookingOnly
+    );
+    expect(finalJob[0].getTime()).toBe(Math.max(bookingTime, whenAt.getTime()));
+
+    await Promise.all([
+      handlers.runPreorderActivate(finalJob[2]),
+      handlers.runPreorderActivate(finalJob[2]),
+    ]);
+    await handlers.runPreorderActivate(finalJob[2]);
+    const activated = await Order.findById(orderId);
+    expect(activated.status).toBe("ASSIGNED");
+    expect(activated.activatedAt).toBeInstanceOf(Date);
+    expect(activated.statusLog.filter((entry) => entry.status === "ASSIGNED")).toHaveLength(1);
+    const chat = await Chat.findById(activated.chatId);
+    expect(chat.members.map(String)).toContain(String(world.drivers[0].user._id));
+  });
+
+  it("a final activation neither publishes nor fans out an unbooked order", async () => {
+    const world = await setupPilotCity(app);
+    const handlers = require("../jobs/handlers");
+    const created = await createOrder(app, world.passenger, world.city, {
+      whenType: "scheduled",
+      whenAt: new Date(Date.now() + 60 * 60 * 1000).toISOString(),
+    });
+    const orderId = created.body.data.order._id;
+    const scheduledCount = agenda.schedule.mock.calls.length;
+    for (const status of ["PUBLISHED", "DRAFT", "CANCELLED"]) {
+      await Order.updateOne({ _id: orderId }, { $set: { status } });
+      await handlers.runPreorderActivate({ orderId, bookingOnly: true });
+      expect((await Order.findById(orderId)).status).toBe(status);
+      expect(agenda.schedule).toHaveBeenCalledTimes(scheduledCount);
+    }
   });
 });
