@@ -22,6 +22,7 @@ const OrderChat = ({ orderId, me, onBack, startCall }) => {
   const [error, setError] = useState(null);
   const [stars, setStars] = useState(0);
   const [rated, setRated] = useState(false);
+  const [hoverStars, setHoverStars] = useState(0);
 
   // Все хуки объявляются до ранних return, иначе число хуков меняется при загрузке заказа
   const fileInputRef = useRef();
@@ -496,19 +497,25 @@ const OrderChat = ({ orderId, me, onBack, startCall }) => {
       {isParticipant && canRate && (
         <div className="p-3 border-t border-secondary-text/20">
           <div className="text-sm mb-1">Оцените поездку:</div>
-          <div className="flex gap-1">
-            {[1, 2, 3, 4, 5].map((value) => (
-              <button
-                key={value}
-                className={`text-xl ${value <= stars ? "text-warning" : "text-secondary-text"}`}
-                onClick={() => rate(value)}
-                aria-label={`Оценить поездку на ${value} ${
-                  value === 1 ? "звезду" : value < 5 ? "звезды" : "звёзд"
-                }`}
-              >
-                 <TaxiIcon name="starFilled" />
-              </button>
-            ))}
+          <div className="flex gap-1" onMouseLeave={() => setHoverStars(0)}>
+            {[1, 2, 3, 4, 5].map((value) => {
+              const filled = value <= (hoverStars || stars);
+              return (
+                <button
+                  key={value}
+                  type="button"
+                  className={`press p-1 rounded-lg ${filled ? "text-warning" : "text-secondary-text/60"}`}
+                  onMouseEnter={() => setHoverStars(value)}
+                  onFocus={() => setHoverStars(value)}
+                  onClick={() => rate(value)}
+                  aria-label={`Оценить поездку на ${value} ${
+                    value === 1 ? "звезду" : value < 5 ? "звезды" : "звёзд"
+                  }`}
+                >
+                  <TaxiIcon name={filled ? "starFilled" : "star"} size={30} />
+                </button>
+              );
+            })}
           </div>
         </div>
       )}

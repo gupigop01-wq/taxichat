@@ -97,7 +97,7 @@ test("current roles and users are read without registering duplicate listeners",
   rerender({ role: "passenger", userId: undefined });
   deliver("order:status", { orderId: "order", status: "DISPUTE", scope: "order" });
   expect(notices()).toHaveLength(1);
-  expect(socket.on).toHaveBeenCalledTimes(4);
+  expect(socket.on).toHaveBeenCalledTimes(5);
 });
 
 test.each([
@@ -133,6 +133,24 @@ test("unmount removes only this hook's socket listeners", () => {
   deliver("order:message", { orderId: "order", body: "after unmount" });
   expect(notices()).toHaveLength(0);
   expect(otherListener).toHaveBeenCalledTimes(1);
-  expect(socket.off).toHaveBeenCalledTimes(4);
+  expect(socket.off).toHaveBeenCalledTimes(5);
 });
 
+
+
+
+test("both participants get a spoken notice when the ride is rated", () => {
+  const { notices } = renderNotices();
+  deliver("order:rated", {
+    orderId: "order", ratingId: "r1", stars: 5,
+    fromRole: "passenger", passengerId: "passenger", driverId: "driver",
+  });
+  expect(notices()).toHaveLength(1);
+  expect(notices()[0]).toMatchObject({ kind: "rating", message: "Пассажир оценил(а) поездку: 5 из 5", speak: true });
+  // the same event delivered twice (personal + room copies) shows once
+  deliver("order:rated", {
+    orderId: "order", ratingId: "r1", stars: 5,
+    fromRole: "passenger", passengerId: "passenger", driverId: "driver",
+  });
+  expect(notices()).toHaveLength(1);
+});

@@ -8,6 +8,8 @@ const User = require("../models/User");
 const DriverProfile = require("../models/DriverProfile");
 const Membership = require("../models/Membership");
 const ApiError = require("../utilities/errors");
+const { emitOrderEvents } = require("../utilities/sockets");
+const pushService = require("../utilities/pushService");
 const catchAsyncError = require("../utilities/catchAsyncError");
 const { validateBody } = require("../utilities/catchAsyncError");
 const { logAudit } = require("../utilities/audit");
@@ -127,6 +129,26 @@ exports.rateOrder = [
       await refreshDriverRating(order.driverId);
     }
 
+    // Both participants get a push and an in-app notice about the rating
+    const ratedPayload = {
+      orderId: order._id,
+      stars: rating.stars,
+      fromRole: rating.fromRole,
+      fromName: req.user.name,
+      ratingId: rating._id,
+      passengerId: String(order.passengerId),
+      driverId: order.driverId ? String(order.driverId) : null,
+      scope: "order",
+      eventId: `rating:${rating._id}`,
+    };
+    emitOrderEvents([
+      { room: `user:${order.passengerId}`, event: "order:rated", payload: ratedPayload },
+      ...(order.driverId
+        ? [{ room: `user:${order.driverId}`, event: "order:rated", payload: ratedPayload }]
+        : []),
+    ]);
+    void pushService.notifyOrderRated(order, ratedPayload).catch(() => undefined);
+
     res.status(201).json({ status: "success", data: { rating } });
   }),
 ];
@@ -218,7 +240,6 @@ exports.raiseSos = catchAsyncError(async (req, res) => {
     role: "dispatcher",
     status: "ACTIVE",
   }).select("userId");
-  const { emitOrderEvents } = require("../utilities/sockets");
   emitOrderEvents(
     dispatchers.map((dispatcher) => ({
       room: `user:${dispatcher.userId}`,
@@ -301,3 +322,5 @@ exports.reviewComplaint = catchAsyncError(async (req, res) => {
 
   res.json({ status: "success", data: { complaint } });
 });
+
+

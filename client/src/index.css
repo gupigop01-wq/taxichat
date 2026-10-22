@@ -63,6 +63,12 @@ html {
     stroke: currentColor;
     fill: none;
   }
+
+  /* Solid glyphs (filled star, record dot, circles) keep their fill */
+  svg.taxi-icon.taxi-icon-solid > path {
+    fill: currentColor;
+    stroke: none;
+  }
 }
 
 /* Same taxi palette for the legacy dark-mode selector: the theme is always
@@ -636,3 +642,4 @@ input[type="range"].time-range::-moz-range-thumb {
   font-size: 1.25rem;
   color: #b9b9b9;
 }
+

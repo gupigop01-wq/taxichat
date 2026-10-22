@@ -55,3 +55,18 @@ export const newMessageNotice = (msg = {}) => {
     speak: true,
   };
 };
+// The other participant rated the ride: show the stars and speak it.
+export const orderRatedNotice = (payload = {}) => {
+  const stars = Number(payload.stars) || 0;
+  const starsWord = stars === 1 ? "звезда" : stars < 5 ? "звезды" : "звёзд";
+  const who = payload.fromRole === "passenger" ? "Пассажир" : "Водитель";
+  const message = `${who} оценил(а) поездку: ${stars} из 5`;
+  return {
+    kind: "rating",
+    orderId: payload.orderId,
+    message,
+    speakText: `Оценка поездки. ${stars} ${starsWord}`,
+    speak: true,
+    type: "success",
+  };
+};

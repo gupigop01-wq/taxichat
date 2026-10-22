@@ -137,6 +137,31 @@ const notifyNewOrder = async (order, { excludeUserId } = {}) => {
   return sendPushToCityDrivers(order.cityId, payload, { excludeUserId });
 };
 
+
+// The ride was rated: both participants learn about it (the star count and
+// who rated whom), so nobody misses that feedback arrived.
+const notifyOrderRated = async (order, { stars, fromRole, fromName } = {}) => {
+  if (!configure()) return { sent: 0, skipped: "push-not-configured" };
+  const text =
+    fromRole === "passenger"
+      ? `Пассажир оценил поездку: ${stars} из 5 ★`
+      : `Водитель оценил поездку: ${stars} из 5 ★`;
+  const payload = {
+    kind: "rating",
+    title: "Оценка поездки",
+    body: text,
+    speakText: text,
+    tag: "bombila-live",
+    renotify: true,
+    url: "/",
+    orderId: String(order._id ?? order.id),
+  };
+  const recipients = [];
+  if (order.passengerId) recipients.push(String(order.passengerId));
+  if (order.driverId) recipients.push(String(order.driverId));
+  const results = await Promise.allSettled(recipients.map((id) => sendPushToUser(id, payload)));
+  return { sent: results.filter((result) => result.value?.sent > 0).length };
+};
 module.exports = {
   configure,
   publicKey,
@@ -145,9 +170,11 @@ module.exports = {
   notifyOrderStatus,
   notifyNewOffer,
   notifyNewOrder,
+  notifyOrderRated,
   // test-only: forget the cached "configured" state between scenarios
   __resetConfiguredForTests: () => {
     configured = false;
   },
 };
+
 

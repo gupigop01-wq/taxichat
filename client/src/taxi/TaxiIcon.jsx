@@ -36,7 +36,9 @@ const icons = {
 export default function TaxiIcon({ name, size = 20, className = "", style, ...props }) {
   const Icon = icons[name];
   if (!Icon) return null;
-  return <Icon aria-hidden="true" className={`taxi-icon shrink-0 ${className}`} size={size} stroke={2} style={{ width: size, height: size, ...style }} {...props} />;
+  // Filled glyphs must keep their fill: the global base style sets fill:none
+  const solid = /^(starFilled|record|circle|completed)$/.test(name);
+  return <Icon aria-hidden="true" className={`taxi-icon ${solid ? "taxi-icon-solid" : ""} shrink-0 ${className}`} size={size} stroke={2} style={{ width: size, height: size, ...style }} {...props} />;
 }
 
 const emojiIcons = {

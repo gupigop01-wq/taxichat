@@ -2,7 +2,7 @@ import { useEffect, useRef } from "react";
 import { useDispatch } from "react-redux";
 import { notificationActions } from "../store/notificationSlice";
 import useSocket from "./useSocket";
-import { orderStatusNotice, newOrderNotice, newOfferNotice, newMessageNotice } from "../taxi/orderNotices";
+import { orderStatusNotice, newOrderNotice, newOfferNotice, newMessageNotice, orderRatedNotice } from "../taxi/orderNotices";
 
 // Live notices for the current role only:
 //  - driver/dispatcher: new orders in the city
@@ -75,15 +75,25 @@ const useOrderNotices = ({ role, userId }) => {
 
     socket.on("order:new", onNew);
     socket.on("order:message", onMessage);
+    const onRated = (payload) => {
+      if (!payload?.stars) return;
+      const me = String(userRef.current ?? "");
+      const isParticipant =
+        String(payload?.passengerId) === me || String(payload?.driverId) === me;
+      if (isParticipant) showOnce(`rating:${payload?.ratingId}`, orderRatedNotice(payload));
+    };
     socket.on("order:offer", onOffer);
     socket.on("order:status", onStatus);
+    socket.on("order:rated", onRated);
     return () => {
       socket.off("order:new", onNew);
       socket.off("order:message", onMessage);
       socket.off("order:offer", onOffer);
       socket.off("order:status", onStatus);
+      socket.off("order:rated", onRated);
     };
   }, [dispatch, socket]);
 };
 
 export default useOrderNotices;
+
