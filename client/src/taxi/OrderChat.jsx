@@ -494,9 +494,11 @@ const OrderChat = ({ orderId, me, onBack, startCall }) => {
         })}
       </div>
 
-      {isParticipant && canRate && (
+      {isParticipant && order.status === "COMPLETED" && (
         <div className="p-3 border-t border-secondary-text/20">
-          <div className="text-sm mb-1">Оцените поездку:</div>
+          <div className="text-sm mb-1">
+            {rated ? `Вы оценили поездку: ${stars} из 5` : "Оцените поездку:"}
+          </div>
           <div className="flex gap-1" onMouseLeave={() => setHoverStars(0)}>
             {[1, 2, 3, 4, 5].map((value) => {
               const filled = value <= (hoverStars || stars);
@@ -504,13 +506,17 @@ const OrderChat = ({ orderId, me, onBack, startCall }) => {
                 <button
                   key={value}
                   type="button"
-                  className={`press p-1 rounded-lg ${filled ? "text-warning" : "text-secondary-text/60"}`}
-                  onMouseEnter={() => setHoverStars(value)}
-                  onFocus={() => setHoverStars(value)}
-                  onClick={() => rate(value)}
-                  aria-label={`Оценить поездку на ${value} ${
-                    value === 1 ? "звезду" : value < 5 ? "звезды" : "звёзд"
-                  }`}
+                  disabled={rated}
+                  className={`press p-1 rounded-lg ${filled ? "text-warning" : "text-secondary-text/60"} ${rated ? "cursor-default" : ""}`}
+                  onMouseEnter={() => !rated && setHoverStars(value)}
+                  onFocus={() => !rated && setHoverStars(value)}
+                  onClick={() => !rated && rate(value)}
+                  aria-label={rated
+                    ? `Ваша оценка: ${value} из 5`
+                    : `Оценить поездку на ${value} ${
+                        value === 1 ? "звезду" : value < 5 ? "звезды" : "звёзд"
+                      }`}
+                  aria-pressed={rated && value <= stars}
                 >
                   <TaxiIcon name={filled ? "starFilled" : "star"} size={30} />
                 </button>

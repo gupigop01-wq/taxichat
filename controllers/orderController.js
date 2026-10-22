@@ -389,6 +389,22 @@ exports.listOrders = catchAsyncError(async (req, res) => {
     serialized.push(await serializeOrderFor(order, req, cache));
   }
 
+  // The viewer's own offer per order: the driver UI shows "Отклик отправлен"
+  // and blocks a second offer until the passenger answers
+  const ownOffers = await Offer.find({
+    orderId: { $in: orders.map((order) => order._id) },
+    driverId: req.user._id,
+  }).select("orderId priceText etaMin status");
+  const offerByOrder = new Map(
+    ownOffers.map((offer) => [
+      String(offer.orderId),
+      { id: String(offer._id), priceText: offer.priceText, etaMin: offer.etaMin, status: offer.status },
+    ])
+  );
+  for (const view of serialized) {
+    view.myOffer = offerByOrder.get(String(view._id)) ?? null;
+  }
+
   // Unread human messages per order chat for the current viewer
   const chatIdList = orders
     .filter((order) => order.chatId)
@@ -621,6 +637,10 @@ exports.createOffer = [
       driverId: req.user._id,
     });
     if (existing) {
+      // One offer per driver per order: the passenger answers it, the driver
+      // cannot spam updated prices while the answer is pending
+      if (existing.status === "PENDING")
+        throw new ApiError(409, "Отклик уже отправлен — ждём ответа пассажира");
       existing.priceText = req.body.priceText;
       existing.etaMin = req.body.etaMin;
       existing.status = "PENDING";

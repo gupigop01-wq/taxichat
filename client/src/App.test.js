@@ -56,14 +56,14 @@ test("a successful login changes the authenticated shell and reconnects once", a
   global.fetch.mockResolvedValue({ ok: true, json: async () => ({ data: {} }) });
   const { store } = renderApp();
   await userEvent.type(screen.getByLabelText(/Логин/), "passenger");
-  await userEvent.type(screen.getByLabelText(/Пароль/), "password123");
+  await userEvent.type(screen.getByLabelText(/Пароль/), "Bombila2026");
   userEvent.click(screen.getByRole("button", { name: "Войти" }));
 
   expect(await screen.findByRole("main", { name: "Рабочая область такси" })).toBeInTheDocument();
   expect(store.getState().authReducer.loggedIn).toBe(true);
   expect(screen.queryByLabelText(/Пароль/)).not.toBeInTheDocument();
   expect(global.fetch).toHaveBeenCalledWith("/api/user/login", expect.objectContaining({
-    method: "POST", body: JSON.stringify({ username: "passenger", password: "password123" }),
+    method: "POST", body: JSON.stringify({ username: "passenger", password: "Bombila2026" }),
   }));
   expect(reconnectSocket).toHaveBeenCalledTimes(1);
 });
@@ -73,3 +73,4 @@ test("renders the workspace rather than login for an authenticated user", () => 
   expect(screen.getByRole("main", { name: "Рабочая область такси" })).toBeInTheDocument();
   expect(screen.queryByLabelText(/Логин/)).not.toBeInTheDocument();
 });
+

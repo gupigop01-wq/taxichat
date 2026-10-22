@@ -18,8 +18,8 @@ describe("Auth API", () => {
   const userData = {
     name: "Тест Пассажир",
     username: "TestPassenger",
-    password: "password123",
-    confirmPassword: "password123",
+    password: "Bombila2026",
+    confirmPassword: "Bombila2026",
   };
 
   it("health check responds ok", async () => {
@@ -58,7 +58,7 @@ describe("Auth API", () => {
     await request(app).post("/api/user/register").send(userData);
     const res = await request(app)
       .post("/api/user/login")
-      .send({ username: "testpassenger", password: "password123" });
+      .send({ username: "testpassenger", password: "Bombila2026" });
     expect(res.status).toBe(200);
     expect(res.body.data.user.username).toBe("testpassenger");
   });
@@ -130,3 +130,4 @@ describe("Auth API", () => {
     expect(after.status).toBe(401);
   });
 });
+

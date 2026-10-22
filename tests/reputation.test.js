@@ -372,7 +372,7 @@ describe("Bans and share links", () => {
 
     const login = await request(app)
       .post("/api/user/login")
-      .send({ username: victim.user.username, password: "password123" });
+      .send({ username: victim.user.username, password: "Bombila2026" });
     expect(login.status).toBe(403);
     expect(login.body.message).toContain("заблокирован");
 
@@ -431,3 +431,4 @@ describe("Bans and share links", () => {
     expect(missing.status).toBe(404);
   });
 });
+

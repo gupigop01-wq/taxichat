@@ -15,8 +15,8 @@ const registerUser = async (app, overrides = {}) => {
     .post("/api/user/register")
     .send({
       name: "Тестовый Пользователь",
-      password: "password123",
-      confirmPassword: "password123",
+      password: "Bombila2026",
+      confirmPassword: "Bombila2026",
       username,
       ...overrides,
     });
@@ -25,3 +25,4 @@ const registerUser = async (app, overrides = {}) => {
 };
 
 module.exports = { registerAndLogin, registerUser };
+

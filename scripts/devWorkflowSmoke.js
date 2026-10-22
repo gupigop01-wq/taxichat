@@ -72,7 +72,7 @@ const waitForUrl = async (url, timeoutMs) => {
     for (const [username, name, role, profile] of spec) {
       // Recreate users like scripts/seed.js so the bcrypt pre-save hook runs
       await User.deleteOne({ username });
-      const user = await User.create({ username, name, password: "password123", confirmPassword: "password123" });
+      const user = await User.create({ username, name, password: "Bombila2026", confirmPassword: "Bombila2026" });
       const membership = await Membership.findOneAndUpdate(
         { userId: user._id, cityId: kazan._id, role },
         { $setOnInsert: { userId: user._id, cityId: kazan._id, role, status: "ACTIVE", ...(role === "driver" && { zones: [zones[0]._id] }) } },
@@ -96,8 +96,8 @@ const waitForUrl = async (url, timeoutMs) => {
       await User.create({
         username: "passenger",
         name: "Пассажир",
-        password: "password123",
-        confirmPassword: "password123",
+        password: "Bombila2026",
+        confirmPassword: "Bombila2026",
       });
     }
     await Membership.findOneAndUpdate(
@@ -121,7 +121,7 @@ const waitForUrl = async (url, timeoutMs) => {
     const login = await fetch("http://localhost:3000/api/user/login", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ username: "passenger", password: "password123" }),
+      body: JSON.stringify({ username: "passenger", password: "Bombila2026" }),
     });
     const cookie = (login.headers.get("set-cookie") || "").split(";")[0];
     console.log("PROXY LOGIN:", login.status);
@@ -167,3 +167,4 @@ const waitForUrl = async (url, timeoutMs) => {
     await mms.stop();
   }
 })();
+

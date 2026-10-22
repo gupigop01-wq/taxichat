@@ -63,8 +63,8 @@ describe("Auth responses", () => {
     const reg = await request(app).post("/api/user/register").send({
       name: "Тест",
       username,
-      password: "password123",
-      confirmPassword: "password123",
+      password: "Bombila2026",
+      confirmPassword: "Bombila2026",
     });
     expect(reg.status).toBe(201);
     expect(reg.body.data.token).toBeUndefined();
@@ -72,7 +72,7 @@ describe("Auth responses", () => {
 
     const login = await request(app)
       .post("/api/user/login")
-      .send({ username, password: "password123" });
+      .send({ username, password: "Bombila2026" });
     expect(login.status).toBe(200);
     expect(login.body.data.token).toBeUndefined();
     expect(login.body.data.user.password).toBeUndefined();
@@ -384,3 +384,4 @@ describe("Preorder scheduling", () => {
     }
   });
 });
+

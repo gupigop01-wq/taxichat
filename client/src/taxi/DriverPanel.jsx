@@ -33,6 +33,9 @@ const DriverPanel = ({ me, cityId, driverProfile, refreshMe, startCall }) => {
   // Live link indicator: shows whether this device currently receives events
   const [linked, setLinked] = useState(socket.connected);
   const [lastEvent, setLastEvent] = useState("—");
+  // Orders this driver already answered: no second offer until the passenger
+  // accepts or declines (survives re-renders; list refresh brings myOffer)
+  const [sentOffers, setSentOffers] = useState({});
   useEffect(() => {
     const up = () => {
       setLinked(true);
@@ -181,11 +184,13 @@ const DriverPanel = ({ me, cityId, driverProfile, refreshMe, startCall }) => {
   };
 
   const sendOffer = async (order) => {
+    if (order.myOffer || sentOffers[order._id]) return;
     try {
       const priceText = await ask({ title: "Цена поездки", placeholder: "Например: 350", okText: "Отправить" });
       if (!priceText) return;
       const etaMin = parseInt((await ask({ title: "Время подачи, минут", placeholder: "Например: 5", inputMode: "numeric", okText: "Отправить" })) ?? "10", 10);
       await apiPost(`/api/orders/${order._id}/offers`, { priceText, etaMin });
+      setSentOffers((current) => ({ ...current, [order._id]: { priceText, etaMin } }));
       dispatch(
         notificationActions.addNotification({
           message: "Отклик отправлен пассажиру",
@@ -328,6 +333,10 @@ const DriverPanel = ({ me, cityId, driverProfile, refreshMe, startCall }) => {
                   <button className="bg-success text-white px-3 py-1.5 rounded-lg" onClick={() => accept(order)}>
                     Принять
                   </button>
+                ) : order.myOffer || sentOffers[order._id] ? (
+                  <div className="text-sm text-secondary-text">
+                    <IconText>⏳ Отклик отправлен: {order.myOffer?.priceText ?? sentOffers[order._id].priceText} ₽ · ждём ответа пассажира</IconText>
+                  </div>
                 ) : (
                   <button className="btn-accent press px-3 py-1.5 rounded-xl font-semibold" onClick={() => sendOffer(order)}>
                     Прислать отклик

@@ -70,7 +70,7 @@ describe("Profile update whitelist", () => {
 
     const oldLogin = await request(app)
       .post("/api/user/login")
-      .send({ username: user.user.username, password: "password123" });
+      .send({ username: user.user.username, password: "Bombila2026" });
     expect(oldLogin.status).toBe(200);
   });
 
@@ -330,3 +330,4 @@ describe("Order transitions are race-proof and reach participants in person", ()
     passengerClient.close();
   });
 });
+

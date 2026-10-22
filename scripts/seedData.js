@@ -2,7 +2,9 @@ const { importGeoData } = require("./geoImport");
 const geoSeed = require("../data/geoSeed");
 const { recalcCityStatus } = require("../utilities/cityStatus");
 
-const PASSWORD = "password123";
+// Demo password: old leaked test password triggers Chrome/carrier warnings,
+// so demo accounts use a simple phrase that is not in breach databases.
+const PASSWORD = "Bombila2026";
 
 // Demo reference data and accounts (concept 1.14: Казань -> PILOT).
 // Exported so the server can auto-seed an empty ephemeral database
@@ -140,3 +142,4 @@ const seedDemoData = async () => {
 };
 
 module.exports = { seedDemoData, PASSWORD };
+
