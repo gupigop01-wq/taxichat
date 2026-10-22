@@ -20,6 +20,7 @@ const MATCH_MODES = ["offers", "first_take", "dispatcher"];
 const statusLogSchema = new mongoose.Schema(
   {
     status: String,
+    eventId: String,
     by: { type: mongoose.Schema.Types.ObjectId, ref: "User" },
     at: { type: Date, default: Date.now },
     reason: String,

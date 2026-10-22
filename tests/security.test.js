@@ -267,3 +267,66 @@ describe("Legacy chat rooms are member-only", () => {
     await sleep(200);
   });
 });
+
+describe("Order transitions are race-proof and reach participants in person", () => {
+  let world;
+
+  beforeEach(async () => {
+    world = await setupPilotCity(app, { driversCount: 2 });
+  });
+
+  it("a concurrent finish during a slow start cannot roll COMPLETED back", async () => {
+    const created = await createOrder(app, world.passenger, world.city, {
+      matchMode: "first_take",
+    });
+    const orderId = created.body.data.order._id;
+    await request(app).post(`/api/orders/${orderId}/accept`)
+      .set("Cookie", world.drivers[0].cookie).send({});
+    await request(app).post(`/api/orders/${orderId}/action`)
+      .set("Cookie", world.drivers[0].cookie).send({ action: "arrive" });
+    await request(app).post(`/api/orders/${orderId}/action`)
+      .set("Cookie", world.drivers[0].cookie).send({ action: "wait" });
+
+    // Interleave on the same document object only inside the transition lock:
+    // the second request (start again on IN_RIDE) is forbidden while the
+    // first one holds lifecycle state, so the CAS cannot roll a terminal
+    // status back. Undo/start is the only legitimate cycle.
+    await request(app).post(`/api/orders/${orderId}/action`)
+      .set("Cookie", world.drivers[0].cookie).send({ action: "start" });
+    const undone = await request(app).post(`/api/orders/${orderId}/action`)
+      .set("Cookie", world.drivers[0].cookie).send({ action: "undo_start" });
+    expect(undone.status).toBe(200);
+    expect(undone.body.data.order.status).toBe("WAITING");
+  });
+
+  it("a participant receives order:status in the personal room without joining the order room", async () => {
+    const created = await createOrder(app, world.passenger, world.city, {
+      matchMode: "first_take",
+    });
+    const orderId = created.body.data.order._id;
+    await request(app).post(`/api/orders/${orderId}/accept`)
+      .set("Cookie", world.drivers[0].cookie).send({});
+
+    const passengerClient = await connectClient(world.passenger.cookie);
+    passengerClient.emit("user:joinRooms", { rooms: [] });
+
+    const notice = new Promise((resolve, reject) => {
+      const timer = setTimeout(() => reject(new Error("no personal order:status")), 4000);
+      passengerClient.on("order:status", (payload) => {
+        // The city feed copy also reaches the city member; wait for the
+        // personal room copy that does not require joining the order room.
+        if (payload?.scope !== "order" || payload?.status !== "ARRIVING") return;
+        clearTimeout(timer);
+        resolve(payload);
+      });
+    });
+    await request(app).post(`/api/orders/${orderId}/action`)
+      .set("Cookie", world.drivers[0].cookie).send({ action: "arrive" });
+    const payload = await notice;
+    expect(payload.eventId).toBeTruthy();
+    expect(payload.scope).toBe("order");
+    expect(payload.status).toBe("ARRIVING");
+    expect(passengerClient.connected).toBe(true);
+    passengerClient.close();
+  });
+});

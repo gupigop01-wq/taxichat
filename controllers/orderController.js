@@ -9,6 +9,7 @@ const Membership = require("../models/Membership");
 const DriverProfile = require("../models/DriverProfile");
 const Message = require("../models/Message");
 const User = require("../models/User");
+const Rating = require("../models/Rating");
 const ApiError = require("../utilities/errors");
 const catchAsyncError = require("../utilities/catchAsyncError");
 const { validateBody } = require("../utilities/catchAsyncError");
@@ -198,7 +199,7 @@ exports.createOrder = [
       directContext = { targetMembership, targetProfile };
     }
 
-    const order = await Order.create({
+    let order = await Order.create({
       passengerId: req.user._id,
       cityId: data.cityId,
       // Маршрут одной строкой; зоны не используются
@@ -254,7 +255,7 @@ exports.createOrder = [
 
     let events = [];
     if (!isDeferredBroadcast) {
-      ({ events } = await transition(order, "publish", actor));
+      ({ order, events } = await transition(order, "publish", actor));
 
       const timeoutSeconds =
         directContext
@@ -482,6 +483,13 @@ exports.getOrder = catchAsyncError(async (req, res) => {
     orderView.unreadCount = unreadAgg[0]?.count ?? 0;
   }
 
+  // Lets the client hide the stars once this participant has rated the trip
+  // (otherwise reopening the chat offers a second rating that fails with 409)
+  if (isParticipant && order.status === "COMPLETED") {
+    const mine = await Rating.findOne({ orderId: order._id, fromUserId: req.user._id }).select("stars");
+    orderView.myRating = mine ? mine.stars : null;
+  }
+
   res.json({
     status: "success",
     data: { order: orderView },
@@ -496,12 +504,12 @@ exports.orderAction = [
     if (!order) throw new ApiError(404, "Заказ не найден");
 
     const actor = { userId: req.user._id, role: "driver" };
-    const { events } = await transition(order, req.body.action, actor);
+    const { order: updatedOrder, events } = await transition(order, req.body.action, actor);
     emitOrderEvents(events);
 
     res.json({
       status: "success",
-      data: { order: await serializeOrderFor(order, req) },
+      data: { order: await serializeOrderFor(updatedOrder, req) },
     });
   }),
 ];
@@ -533,12 +541,12 @@ exports.cancelOrder = [
             ? "dispatcher"
             : "passenger";
     const actor = { userId: req.user._id, role };
-    const { events } = await transition(order, "cancel", actor, { reason: req.body.reason });
+    const { order: updatedOrder, events } = await transition(order, "cancel", actor, { reason: req.body.reason });
     emitOrderEvents(events);
 
     res.json({
       status: "success",
-      data: { order: await serializeOrderFor(order, req) },
+      data: { order: await serializeOrderFor(updatedOrder, req) },
     });
   }),
 ];
@@ -552,12 +560,12 @@ exports.openDispute = [
 
     const role = String(order.passengerId) === String(req.user._id) ? "passenger" : "driver";
     const actor = { userId: req.user._id, role };
-    const { events } = await transition(order, "dispute", actor, { reason: req.body.reason });
+    const { order: updatedOrder, events } = await transition(order, "dispute", actor, { reason: req.body.reason });
     emitOrderEvents(events);
 
     res.json({
       status: "success",
-      data: { order: await serializeOrderFor(order, req) },
+      data: { order: await serializeOrderFor(updatedOrder, req) },
     });
   }),
 ];
@@ -573,12 +581,12 @@ exports.resolveDispute = [
 
     const event = req.body.outcome === "complete" ? "resolve_complete" : "resolve_cancel";
     const actor = { userId: req.user._id, role: "dispatcher" };
-    const { events } = await transition(order, event, actor, { reason: req.body.reason });
+    const { order: updatedOrder, events } = await transition(order, event, actor, { reason: req.body.reason });
     emitOrderEvents(events);
 
     res.json({
       status: "success",
-      data: { order: await serializeOrderFor(order, req) },
+      data: { order: await serializeOrderFor(updatedOrder, req) },
     });
   }),
 ];
@@ -874,12 +882,12 @@ exports.declineDirectOrder = catchAsyncError(async (req, res) => {
     throw new ApiError(400, "Отклонить можно только прямой заказ");
 
   const actor = { userId: req.user._id, role: "driver" };
-  const { events } = await transition(order, "cancel", actor, {
+  const { order: updatedOrder, events } = await transition(order, "cancel", actor, {
     reason: req.body?.reason ?? "Водитель отклонил заказ",
   });
 
   await botDispatcher.postSystemMessage(
-    order.chatId,
+    updatedOrder.chatId,
     "Вы можете опубликовать заказ для всех водителей города"
   );
 
@@ -887,7 +895,7 @@ exports.declineDirectOrder = catchAsyncError(async (req, res) => {
 
   res.json({
     status: "success",
-    data: { order: await serializeOrderFor(order, req) },
+    data: { order: await serializeOrderFor(updatedOrder, req) },
   });
 });
 
@@ -908,7 +916,7 @@ exports.republishOrder = catchAsyncError(async (req, res) => {
   if (!["PILOT", "ACTIVE"].includes(city.status))
     throw new ApiError(403, "В вашем городе заказы ещё не открыты");
 
-  const order = await Order.create({
+  let order = await Order.create({
     passengerId: original.passengerId,
     cityId: original.cityId,
     fromZone: original.fromZone,
@@ -933,7 +941,8 @@ exports.republishOrder = catchAsyncError(async (req, res) => {
   order.chatId = chat._id;
 
   const actor = { userId: req.user._id, role: "passenger" };
-  const { events } = await transition(order, "publish", actor);
+  let events;
+  ({ order, events } = await transition(order, "publish", actor));
 
   order.expiresAt = new Date(
     Date.now() + (city.settings?.cascadeTimeouts?.expire ?? 600) * 1000
@@ -975,7 +984,9 @@ exports.bookOrder = catchAsyncError(async (req, res) => {
   if (!driverMembership) throw new ApiError(403, "Вы не водитель этого города");
 
   const actor = { userId: req.user._id, role: "driver" };
-  const { events } = await transition(order, "book", actor);
+  const { order: bookedOrder, events } = await transition(order, "book", actor);
+  const { scheduleBookingActivation } = require("../jobs/index");
+  await scheduleBookingActivation(bookedOrder);
   events.push(
     { room: `city:${order.cityId}`, event: "order:taken", payload: { orderId: order._id } }
   );
@@ -983,7 +994,7 @@ exports.bookOrder = catchAsyncError(async (req, res) => {
 
   res.json({
     status: "success",
-    data: { order: await serializeOrderFor(order, req) },
+    data: { order: await serializeOrderFor(bookedOrder, req) },
   });
 });
 
@@ -997,12 +1008,12 @@ exports.activateBooking = catchAsyncError(async (req, res) => {
     throw new ApiError(403, "Это не ваша бронь");
 
   const actor = { userId: req.user._id, role: "driver" };
-  const { events } = await transition(order, "activate", actor);
+  const { order: activatedOrder, events } = await transition(order, "activate", actor);
   emitOrderEvents(events);
 
   res.json({
     status: "success",
-    data: { order: await serializeOrderFor(order, req) },
+    data: { order: await serializeOrderFor(activatedOrder, req) },
   });
 });
 

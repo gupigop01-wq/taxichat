@@ -1,3 +1,4 @@
+const { randomUUID } = require("crypto");
 const Order = require("../models/Order");
 const Chat = require("../models/Chat");
 const Message = require("../models/Message");
@@ -98,6 +99,34 @@ const SYSTEM_MESSAGES = {
 };
 
 const TERMINAL_STATUSES = ["COMPLETED", "CANCELLED", "NO_SHOW", "EXPIRED"];
+
+// Keep chat/presence side effects in lifecycle order within this process.
+// Conditional database updates below still protect concurrent server instances.
+const pendingChanges = new Map();
+const withOrderChange = async (orderId, change) => {
+  const key = String(orderId);
+  const previous = pendingChanges.get(key) ?? Promise.resolve();
+  let release;
+  const current = new Promise((resolve) => { release = resolve; });
+  pendingChanges.set(key, current);
+  await previous;
+  try {
+    return await change();
+  } finally {
+    release();
+    if (pendingChanges.get(key) === current) pendingChanges.delete(key);
+  }
+};
+
+const statusEvents = (order, payload) => [
+  { room: `order:${order._id}`, event: "order:status", payload: { ...payload, scope: "order" } },
+  { room: `city:${order.cityId}`, event: "order:status", payload: { ...payload, scope: "city" } },
+  ...[...new Set([order.passengerId, order.driverId].filter(Boolean).map(String))].map((userId) => ({
+    room: `user:${userId}`,
+    event: "order:status",
+    payload: { ...payload, scope: "order" },
+  })),
+];
 
 const PENALTY_BAN_THRESHOLD = 10;
 const PENALTY_STATUSES = ["ASSIGNED", "ARRIVING", "WAITING", "IN_RIDE"];
@@ -215,16 +244,18 @@ const updateOrderChat = async (order, { membersToAdd = [], systemText } = {}) =>
 // The single entry point for every status change (concept 1.6).
 // Writes statusLog, posts a bot system message to the order chat and returns
 // socket events for the caller to emit.
-const transition = async (order, event, actor, { reason } = {}) => {
+const transition = (order, event, actor, { reason } = {}) => withOrderChange(order._id, async () => {
   assertTransition(order, event, actor);
 
   if (event === "cancel" && !reason)
     throw new ApiError(400, "Укажите причину отмены");
 
   const previousStatus = order.status;
+  const eventId = randomUUID();
   order.status = TRANSITIONS[event].to;
   order.statusLog.push({
     status: order.status,
+    eventId,
     by: actor.userId ?? undefined,
     ...(reason && { reason }),
     at: new Date(),
@@ -274,18 +305,28 @@ const transition = async (order, event, actor, { reason } = {}) => {
     membersToAdd.push(order.driverId);
   }
 
-  // Claim the status atomically before saving, so two concurrent requests
-  // (e.g. two drivers booking the same order) cannot both win the race
-  if (!order.isNew) {
-    const claimed = await Order.updateOne(
-      { _id: order._id, status: previousStatus },
-      { $set: { status: order.status } }
+  if (order.isNew) {
+    await order.save();
+  } else {
+    // Status, timestamps, assignment and log become visible together. The
+    // version also rejects stale snapshots after a status cycle (start/undo).
+    await order.validate();
+    const changes = order.getChanges();
+    changes.$inc = { ...changes.$inc, __v: 1 };
+    const committed = await Order.findOneAndUpdate(
+      {
+        _id: order._id,
+        status: previousStatus,
+        __v: order.__v === undefined ? { $exists: false } : order.__v,
+      },
+      changes,
+      { new: true, runValidators: true }
     );
-    if (claimed.matchedCount === 0)
+    if (!committed)
       throw new ApiError(409, "Заказ уже изменён другим участником");
-  }
 
-  await order.save();
+    order = committed;
+  }
 
   await updateOrderChat(order, { membersToAdd, systemText });
 
@@ -311,24 +352,21 @@ const transition = async (order, event, actor, { reason } = {}) => {
 
   const base = {
     orderId: order._id,
+    eventId,
     status: order.status,
     previousStatus,
     by: actor.userId,
     passengerId: String(order.passengerId),
     driverId: order.driverId ? String(order.driverId) : null,
   };
-  // Participants get the change in the order room; the city feed carries the
-  // same change so drivers see assignments. Clients filter by participation.
-  const events = [
-    { room: `order:${order._id}`, event: "order:status", payload: { ...base, scope: "order" } },
-    { room: `city:${order.cityId}`, event: "order:status", payload: { ...base, scope: "city" } },
-  ];
+  const events = statusEvents(order, base);
 
   return { order, events, previousStatus };
-};
+});
 
 // Atomic assignment used by every assign path (concept 1.6: first-take race)
-const assignAtomically = async (orderId, driverId, actor, { priceAgreed } = {}) => {
+const assignAtomically = (orderId, driverId, actor, { priceAgreed } = {}) => withOrderChange(orderId, async () => {
+  const eventId = randomUUID();
   const order = await Order.findOneAndUpdate(
     { _id: orderId, status: "PUBLISHED" },
     {
@@ -338,8 +376,9 @@ const assignAtomically = async (orderId, driverId, actor, { priceAgreed } = {}) 
         ...(priceAgreed && { priceAgreed }),
       },
       $push: {
-        statusLog: { status: "ASSIGNED", by: actor.userId, at: new Date() },
+        statusLog: { status: "ASSIGNED", eventId, by: actor.userId, at: new Date() },
       },
+      $inc: { __v: 1 },
     },
     { new: true }
   );
@@ -355,19 +394,17 @@ const assignAtomically = async (orderId, driverId, actor, { priceAgreed } = {}) 
 
   const assigned = {
     orderId: order._id,
+    eventId,
     status: "ASSIGNED",
     previousStatus: "PUBLISHED",
     by: actor.userId,
     passengerId: String(order.passengerId),
     driverId: String(driverId),
   };
-  const events = [
-    { room: `order:${order._id}`, event: "order:status", payload: { ...assigned, scope: "order" } },
-    { room: `city:${order.cityId}`, event: "order:status", payload: { ...assigned, scope: "city" } },
-  ];
+  const events = statusEvents(order, assigned);
 
   return { order, events };
-};
+});
 
 module.exports = {
   ORDER_STATUSES,
