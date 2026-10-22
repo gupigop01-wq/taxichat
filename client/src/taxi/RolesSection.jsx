@@ -2,6 +2,7 @@ import { useState } from "react";
 import { apiPost } from "./api";
 import { cityStatusEmoji } from "./statusLabels";
 import useSocket from "../hooks/useSocket";
+import { enablePushNotifications, disablePushNotifications } from "./pushClient";
 import TaxiIcon, { IconText } from "./TaxiIcon";
 
 const ROLE_LABELS = {
@@ -26,6 +27,31 @@ const RolesSection = ({ me, cityId, cities, refreshMe, onLogout }) => {
 
   const [error, setError] = useState(null);
   const [notice, setNotice] = useState(null);
+  const [pushBusy, setPushBusy] = useState(false);
+  const [pushOn, setPushOn] = useState(() =>
+    typeof Notification !== "undefined" && Notification.permission === "granted" && "PushManager" in window
+  );
+
+  const togglePush = async () => {
+    setPushBusy(true);
+    try {
+      if (pushOn) {
+        await disablePushNotifications();
+        setPushOn(false);
+        setNotice("Пуш-уведомления выключены");
+      } else {
+        const result = await enablePushNotifications();
+        if (!result.ok) throw new Error(result.reason ?? "Push не включился");
+        setPushOn(true);
+        setNotice("Пуш-уведомления включены");
+      }
+    } catch (err) {
+      setError(err.message ?? "Не удалось включить push");
+    } finally {
+      setPushBusy(false);
+    }
+  };
+
 
   const [driverForm, setDriverForm] = useState({
     displayName: "",
@@ -102,6 +128,25 @@ const RolesSection = ({ me, cityId, cities, refreshMe, onLogout }) => {
     <div className="p-4 space-y-4 overflow-y-auto h-full max-w-lg mx-auto w-full">
       {error && <div className="text-danger text-sm">{error}</div>}
        {notice && <div className="text-success text-sm"><IconText>{notice}</IconText></div>}
+
+      <div className="glass rounded-2xl p-3">
+        <div className="font-semibold mb-1 text-center">
+           <IconText>🔔 Уведомления</IconText>
+        </div>
+        <div className="text-sm text-secondary-text mb-2">
+          Пуши о новых заказах, откликах и статусах поездки. Работают и когда приложение закрыто.
+        </div>
+        <button
+          className={`press px-3 py-2 rounded-xl text-sm font-semibold ${pushOn ? "bg-secondary text-secondary-text" : "btn-accent"}`}
+          onClick={togglePush}
+          disabled={pushBusy}
+          aria-pressed={pushOn}
+        >
+          {pushBusy ? "…"
+            : pushOn ? "Выключить пуш-уведомления"
+            : "🔔 Включить пуш-уведомления"}
+        </button>
+      </div>
 
       <div className="glass rounded-2xl p-3">
         <div className="font-semibold mb-1 text-center">

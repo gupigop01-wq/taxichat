@@ -14,6 +14,7 @@ import DispatcherPanel from "./DispatcherPanel";
 import RolesSection from "./RolesSection";
 import { apiPost } from "./api";
 import { cityStatusEmoji } from "./statusLabels";
+import { registerServiceWorker, listenForPushTaps } from "./pushClient";
 import ErrorBoundary from "./ErrorBoundary";
 import CityPicker from "./CityPicker";
 import TaxiIcon, { IconText } from "./TaxiIcon";
@@ -57,6 +58,16 @@ const TaxiApp = () => {
     };
     window.addEventListener("bombila:open-order", onOpen);
     return () => window.removeEventListener("bombila:open-order", onOpen);
+  }, []);
+  // PWA: service worker + push notification tap relay (opens the order and
+  // speaks the summary with the phone's TTS)
+  useEffect(() => {
+    registerServiceWorker();
+    listenForPushTaps((orderId) => {
+      setTab("trips");
+      setOpenTrip(orderId ?? null);
+      window.dispatchEvent(new CustomEvent("bombila:open-order", { detail: { orderId } }));
+    });
   }, []);
   // Live voice/on-screen notices for order changes, for every role
   useOrderNotices({ role, userId: user?._id });

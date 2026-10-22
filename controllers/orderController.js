@@ -21,6 +21,7 @@ const {
   toDispatcherView,
 } = require("../utilities/orderViews");
 const { emitOrderEvents } = require("../utilities/sockets");
+const pushService = require("../utilities/pushService");
 const botDispatcher = require("../services/botDispatcher");
 
 const createOrderSchema = z
@@ -281,6 +282,10 @@ exports.createOrder = [
       events.push(
         { room: `city:${data.cityId}`, event: "order:new", payload: { orderId: order._id } }
       );
+      // Push to on-the-go drivers (excluding the creator) after the emits
+      void pushService
+        .notifyNewOrder(order, { excludeUserId: req.user._id })
+        .catch(() => undefined);
     }
     emitOrderEvents(events);
 
@@ -654,6 +659,14 @@ exports.createOffer = [
       { room: `user:${order.passengerId}`, event: "order:offer", payload: offerPayload },
       { room: `order:${order._id}`, event: "order:offersChanged", payload: { orderId: order._id } },
     ]);
+    // Fire-and-forget push: passenger reads it with the screen locked
+    void pushService
+      .notifyNewOffer(order, offer, {
+        driverName: offerPayload.driverName,
+        priceText: offerPayload.priceText,
+        etaMin: offerPayload.etaMin,
+      })
+      .catch(() => undefined);
 
     res.status(201).json({ status: "success", data: { offer } });
   }),

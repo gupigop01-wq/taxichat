@@ -1,5 +1,6 @@
 const { randomUUID } = require("crypto");
 const Order = require("../models/Order");
+const pushService = require("../utilities/pushService");
 const Chat = require("../models/Chat");
 const Message = require("../models/Message");
 const Membership = require("../models/Membership");
@@ -361,6 +362,11 @@ const transition = (order, event, actor, { reason } = {}) => withOrderChange(ord
   };
   const events = statusEvents(order, base);
 
+  // Fire-and-forget web push to participants (skips the actor on PUBLISHED)
+  void pushService
+    .notifyOrderStatus(order, { status: order.status, eventId, actorId: actor.userId })
+    .catch(() => undefined);
+
   return { order, events, previousStatus };
 });
 
@@ -402,6 +408,10 @@ const assignAtomically = (orderId, driverId, actor, { priceAgreed } = {}) => wit
     driverId: String(driverId),
   };
   const events = statusEvents(order, assigned);
+
+  void pushService
+    .notifyOrderStatus(order, { status: "ASSIGNED", eventId, actorId: actor.userId })
+    .catch(() => undefined);
 
   return { order, events };
 });

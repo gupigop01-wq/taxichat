@@ -14,6 +14,7 @@ const chatRoomRouter = require("./routers/chatRoomRouter");
 const profileRouter = require("./routers/profileRouter");
 const uploadRouter = require("./routers/uploadRouter");
 const geoRouter = require("./routers/geoRouter");
+const pushRouter = require("./routers/pushRouter");
 const membershipRouter = require("./routers/membershipRouter");
 const dispatchRouter = require("./routers/dispatchRouter");
 const applicationRouter = require("./routers/applicationRouter");
@@ -68,6 +69,7 @@ app.use(
 app.use(shareRouter);
 app.use(globalLimiter);
 app.use("/api/geo", geoRouter);
+app.use("/api/push", pushRouter);
 app.use("/api/user", authRouter);
 
 // Health check with the database connection state (for monitoring)
