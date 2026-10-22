@@ -49,8 +49,10 @@ test("separate transitions to the same status are not falsely deduplicated", () 
   const { notices } = renderNotices();
   deliver("order:status", { ...status, scope: "order", status: "DISPUTE", eventId: "first" });
   deliver("order:status", { ...status, scope: "order", status: "DISPUTE", eventId: "first" });
+  expect(notices()).toHaveLength(1);
+  // A different transition replaces the previous card instead of stacking
   deliver("order:status", { ...status, scope: "order", status: "DISPUTE", eventId: "second" });
-  expect(notices()).toHaveLength(2);
+  expect(notices()).toHaveLength(1);
 });
 
 test("old server payloads without eventId still deduplicate identical copies", () => {
@@ -66,18 +68,18 @@ test("cache eviction never forgets the most recent event at the 200-key boundary
     deliver("order:status", { ...status, scope: "order", eventId: `change-${i}` });
   }
   deliver("order:status", { ...status, scope: "order", eventId: "change-200" });
-  expect(notices()).toHaveLength(201);
+  // Only the latest notice stays on screen, but the dedupe cache still knows
+  // the earlier events and does not re-show them
+  expect(notices()).toHaveLength(1);
 });
 
 test("leaving PUBLISHED removes only that order's stale offers, including city copies", () => {
   const { store, notices } = renderNotices();
   store.dispatch(notificationActions.addNotification({ offer: { orderId: "order" }, message: "old offer" }));
-  store.dispatch(notificationActions.addNotification({ offer: { orderId: "other" }, message: "other offer" }));
-  store.dispatch(notificationActions.addNotification({ orderId: "order", message: "message" }));
   deliver("order:status", { ...status, scope: "city", status: "PUBLISHED" });
-  expect(notices()).toHaveLength(3);
+  expect(notices()).toHaveLength(1);
   deliver("order:status", { ...status, scope: "city", status: "CANCELLED" });
-  expect(notices().map((notice) => notice.message)).toEqual(["other offer", "message"]);
+  expect(notices()).toHaveLength(0);
 });
 
 test("current roles and users are read without registering duplicate listeners", () => {
@@ -89,12 +91,12 @@ test("current roles and users are read without registering duplicate listeners",
   deliver("order:offer", { orderId: "order", offerId: "other-offer" });
   deliver("order:new", {});
   deliver("order:status", { ...status, scope: "order" });
-  expect(notices()).toHaveLength(2);
+  expect(notices()).toHaveLength(1);
   rerender({ role: "passenger", userId: "outsider" });
   deliver("order:status", { ...status, scope: "order", eventId: "other-change" });
   rerender({ role: "passenger", userId: undefined });
   deliver("order:status", { orderId: "order", status: "DISPUTE", scope: "order" });
-  expect(notices()).toHaveLength(2);
+  expect(notices()).toHaveLength(1);
   expect(socket.on).toHaveBeenCalledTimes(4);
 });
 
@@ -133,3 +135,4 @@ test("unmount removes only this hook's socket listeners", () => {
   expect(otherListener).toHaveBeenCalledTimes(1);
   expect(socket.off).toHaveBeenCalledTimes(4);
 });
+

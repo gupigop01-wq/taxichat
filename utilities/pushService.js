@@ -82,7 +82,9 @@ const notifyOrderStatus = async (order, { status, eventId, actorId, driverName }
     title: "Бомбила",
     body: `Заказ: ${text}`,
     speakText: `Заказ. ${text}`,
-    tag: `status:${order._id ?? order.id}`,
+    // One live card in the tray: a newer notice replaces the previous one
+    tag: "bombila-live",
+    renotify: true,
     url: "/",
     orderId: String(order._id ?? order.id),
     eventId,
@@ -105,7 +107,8 @@ const notifyNewOffer = async (order, offer, { driverName, priceText, etaMin } = 
     title: "Отклик водителя",
     body: `${driverName ?? "Водитель"} — ${priceText ?? ""} ₽, подача ${etaMin ?? "?"} мин`,
     speakText: `Отклик водителя. Цена ${priceText ?? ""} ₽`,
-    tag: `offer:${order._id ?? order.id}`,
+    tag: "bombila-live",
+    renotify: true,
     url: "/",
     orderId: String(order._id ?? order.id),
     requireInteraction: true,
@@ -124,7 +127,7 @@ const notifyNewOrder = async (order, { excludeUserId } = {}) => {
     kind: "new-order",
     title: "Новый заказ в городе",
     body: order.to?.text ? `${order.from?.text ?? ""} → ${order.to.text}` : order.from?.text ?? "",
-    tag: `order:${order._id ?? order.id}:${Date.now()}`,
+    tag: "bombila-live",
     renotify: true,
     url: "/",
     orderId: String(order._id ?? order.id),
@@ -147,3 +150,4 @@ module.exports = {
     configured = false;
   },
 };
+

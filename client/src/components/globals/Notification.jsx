@@ -193,7 +193,7 @@ function Notification() {
 
   return (
     <div className="fixed top-[6rem] left-2 right-2 z-[10000] flex flex-col gap-2 pointer-events-none max-w-[calc(100vw-1rem)] overflow-hidden">
-      <AnimatePresence>
+      <AnimatePresence mode="popLayout" initial={false}>
         {notifications.map((item) => (
           <div key={item.id} className="pointer-events-auto w-full min-w-0 max-w-full">
             <NotificationItem item={item} onDismiss={dismiss} />

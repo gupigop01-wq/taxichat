@@ -1,6 +1,6 @@
 // Bombila service worker: web push with buttons (Android), tap-to-open on iOS,
 // offline shell caching, and passing the tap text back to the app for TTS.
-const CACHE = "bombila-shell-v2";
+const CACHE = "bombila-shell-v3";
 const SHELL = ["/", "/manifest.webmanifest", "/icons/icon-192.png", "/icons/icon-512.png", "/icons/badge-72.png"];
 
 self.addEventListener("install", (event) => {
@@ -138,4 +138,5 @@ self.addEventListener("notificationclick", (event) => {
 
   event.waitUntil(focusOrOpen);
 });
+
 

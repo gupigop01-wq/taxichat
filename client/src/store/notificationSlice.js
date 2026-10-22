@@ -10,12 +10,11 @@ const notificationSlice = createSlice({
   name: "notification",
   initialState,
   reducers: {
+    // Only one notice is on screen at a time: a new one replaces the previous
+    // instead of stacking a list of stale cards.
     addNotification: (state, { payload }) => {
       const id = nextId++;
-      state.push({
-        ...payload,
-        id,
-      });
+      return [{ ...payload, id }];
     },
     removeNotification: (state, { payload: id }) => {
       return state.filter((notif) => notif.id !== id);
