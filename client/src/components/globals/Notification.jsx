@@ -5,7 +5,9 @@ import { apiPost } from "../../taxi/api";
 import { motion, AnimatePresence } from "framer-motion";
 import TaxiIcon, { IconText } from "../../taxi/TaxiIcon";
 
-// Auto-dismiss: every notification leaves on its own after this delay
+// Auto-dismiss: every notification leaves on its own after this delay.
+// Offers (kind "offer") are the exception: they wait for a decision and are
+// removed by a status change (removeOfferNotices) or the close button.
 const LIFETIME_MS = 60 * 1000;
 
 // Voice: notifications marked speak=true are read aloud (Russian).
@@ -98,6 +100,8 @@ function NotificationItem({ item, onDismiss }) {
   };
 
   useEffect(() => {
+    // Offers stay until acted on: dismissal, decision, or order status change.
+    if (item.kind === "offer") return undefined;
     const timer = setTimeout(() => onDismiss(item.id), LIFETIME_MS);
     return () => clearTimeout(timer);
   }, [item.id]);
@@ -113,10 +117,10 @@ function NotificationItem({ item, onDismiss }) {
     const accept = async () => {
       try {
         await apiPost(`/api/orders/${orderId}/accept`, { offerId });
-        onDismiss(item.id);
-        // After assignment go straight to this order's page
+        dispatch(notificationActions.removeOfferNotices(orderId));
+        // After assignment go straight to this order's page; the spoken
+        // "driver assigned" status notice comes over the socket
         window.dispatchEvent(new CustomEvent("bombila:open-order", { detail: { orderId } }));
-        dispatch(notificationActions.addNotification({ message: "✅ Водитель назначен", type: "info", speak: true, speakText: "Водитель назначен" }));
       } catch (err) {
         dispatch(notificationActions.addNotification({ message: `⚠️ ${err.message}`, type: "error" }));
       }

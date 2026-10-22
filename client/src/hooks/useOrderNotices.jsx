@@ -8,27 +8,27 @@ import { orderStatusNotice, newOrderNotice, newOfferNotice, newMessageNotice } f
 //  - driver/dispatcher: new orders in the city
 //  - passenger: offers and status of own orders
 //  - participant (passenger or assigned driver): status of own order
-// The server sends each status change twice: to the order room (scope "order")
-// and to the city feed (scope "city"). Only the order-room copy shows a notice;
-// the city copy just refreshes lists, so nothing is shown twice.
+// Personal and order-room status copies share scope "order" and an eventId.
+// The city copy only refreshes lists; participants get one notice on any page.
 const useOrderNotices = ({ role, userId }) => {
   const dispatch = useDispatch();
-  const { socketListen, socket } = useSocket();
+  const { socket } = useSocket();
   const roleRef = useRef(role);
   const userRef = useRef(userId);
+  const shownKeys = useRef(new Set());
   roleRef.current = role;
   userRef.current = userId;
 
   useEffect(() => {
     const show = (notice) => dispatch(notificationActions.addNotification(notice));
-    // De-duplicate notices: the same event may arrive through several socket
-    // rooms (personal + order). One signed key shows one notice only.
-    const shownKeys = new Set();
+    // Bound the cache without forgetting the event that was just received.
     const showOnce = (key, notice) => {
-      const signed = `${key}:${notice?.message ?? ""}`;
-      if (shownKeys.has(signed)) return;
-      shownKeys.add(signed);
-      if (shownKeys.size > 200) shownKeys.clear();
+      const signed = `${userRef.current ?? ""}:${key}`;
+      if (shownKeys.current.has(signed)) return;
+      shownKeys.current.add(signed);
+      if (shownKeys.current.size > 200) {
+        shownKeys.current.delete(shownKeys.current.values().next().value);
+      }
       show(notice);
     };
 
@@ -39,30 +39,39 @@ const useOrderNotices = ({ role, userId }) => {
       if (roleRef.current === "passenger") showOnce(`offer:${payload?.orderId}:${payload?.offerId}`, newOfferNotice(payload));
     };
     const onStatus = (payload) => {
+      if (payload?.orderId && payload?.status && payload.status !== "PUBLISHED") {
+        dispatch(notificationActions.removeOfferNotices(payload.orderId));
+      }
       if (payload?.scope !== "order") return;
       const me = String(userRef.current ?? "");
+      if (!me) return;
       const isParticipant =
         String(payload?.passengerId) === me || String(payload?.driverId) === me;
-      if (isParticipant) showOnce(`status:${payload?.orderId}:${payload?.status}`, orderStatusNotice(payload));
+      // The status fallback covers events from the server before eventId ships.
+      if (isParticipant) showOnce(`status:${payload?.orderId}:${payload?.eventId ?? payload?.status}`, orderStatusNotice(payload));
     };
 
     const onMessage = (payload) => {
       // Own messages never produce a notice
       if (String(payload?.senderId) === String(userRef.current ?? "")) return;
+      // A mounted chat in a hidden tab is not being read.
+      const openOrderId = window.__bombilaOpenOrderId;
+      if (document.visibilityState === "visible" && payload?.orderId && openOrderId != null &&
+          String(payload.orderId) === String(openOrderId)) return;
       show(newMessageNotice(payload));
     };
 
-    socketListen("order:new", onNew);
-    socketListen("order:message", onMessage);
-    socketListen("order:offer", onOffer);
-    socketListen("order:status", onStatus);
+    socket.on("order:new", onNew);
+    socket.on("order:message", onMessage);
+    socket.on("order:offer", onOffer);
+    socket.on("order:status", onStatus);
     return () => {
       socket.off("order:new", onNew);
       socket.off("order:message", onMessage);
       socket.off("order:offer", onOffer);
       socket.off("order:status", onStatus);
     };
-  }, []);
+  }, [dispatch, socket]);
 };
 
 export default useOrderNotices;

@@ -20,6 +20,10 @@ const notificationSlice = createSlice({
     removeNotification: (state, { payload: id }) => {
       return state.filter((notif) => notif.id !== id);
     },
+    // Offer cards of an order are stale once it leaves PUBLISHED (accepted
+    // elsewhere, cancelled, expired): drop them so "Принять" cannot be tapped
+    removeOfferNotices: (state, { payload: orderId }) =>
+      state.filter((notif) => !notif.offer || String(notif.offer.orderId) !== String(orderId)),
     clearAllNotifications: () => initialState,
   },
 });

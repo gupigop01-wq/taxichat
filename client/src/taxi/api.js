@@ -23,7 +23,7 @@ const request = async (url, options = {}) => {
   return data;
 };
 
-export const apiGet = (url) => request(url);
+export const apiGet = (url, options = {}) => request(url, options);
 export const apiPost = (url, body = {}) => request(url, { method: "POST", body });
 export const apiPatch = (url, body = {}) => request(url, { method: "PATCH", body });
 export const apiDelete = (url) => request(url, { method: "DELETE" });
