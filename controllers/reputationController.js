@@ -3,6 +3,8 @@ const mongoose = require("mongoose");
 const Rating = require("../models/Rating");
 const Complaint = require("../models/Complaint");
 const Order = require("../models/Order");
+const City = require("../models/City");
+const User = require("../models/User");
 const DriverProfile = require("../models/DriverProfile");
 const Membership = require("../models/Membership");
 const ApiError = require("../utilities/errors");
@@ -12,13 +14,32 @@ const { logAudit } = require("../utilities/audit");
 const botDispatcher = require("../services/botDispatcher");
 const { regionAdminCityIds } = require("../utilities/rbac");
 
-// City of a complaint: the order city, otherwise the reporter's home city
-const complaintCityId = async (orderId, reporter) => {
-  if (orderId && mongoose.isValidObjectId(orderId)) {
-    const order = await Order.findById(orderId).select("cityId");
-    if (order) return order.cityId;
-  }
-  return reporter?.homeCityId ?? undefined;
+// Prefer the order/home city; membership fallback must be unambiguous.
+const complaintCityId = async (order, reporter) => {
+  if (order) return order.cityId;
+  if (!reporter) return null;
+  if (reporter.homeCityId && (await City.exists({ _id: reporter.homeCityId })))
+    return reporter.homeCityId;
+
+  const cityIds = await Membership.distinct("cityId", {
+    userId: reporter._id,
+    status: "ACTIVE",
+  });
+  const cities = await City.find({ _id: { $in: cityIds } }).select("_id").limit(2);
+  return cities.length === 1 ? cities[0]._id : null;
+};
+
+// Legacy complaints are resolved read-only until an authorized review saves one.
+const effectiveComplaintCityId = async (complaint) => {
+  if (complaint.cityId) return complaint.cityId;
+  const order = complaint.orderId
+    ? await Order.findById(complaint.orderId).select("cityId")
+    : null;
+  if (order) return order.cityId;
+  const reporter = await User.findById(
+    complaint.reporterId?._id ?? complaint.reporterId
+  ).select("homeCityId");
+  return complaintCityId(null, reporter);
 };
 
 const ratingSchema = z.object({
@@ -31,7 +52,10 @@ const ratingSchema = z.object({
 });
 
 const complaintSchema = z.object({
-  orderId: z.string().optional(),
+  orderId: z
+    .string()
+    .refine(mongoose.isValidObjectId, "Некорректный идентификатор заказа")
+    .optional(),
   targetUserId: z.string().optional(),
   type: z.enum(["sos", "fraud", "behavior", "safety", "other"], {
     errorMap: () => ({ message: "Недопустимый тип жалобы" }),
@@ -132,12 +156,23 @@ exports.createComplaint = [
   catchAsyncError(async (req, res) => {
     const { orderId, targetUserId, type, text } = req.body;
 
-    const cityId = await complaintCityId(orderId, req.user);
+    let order = null;
+    if (orderId) {
+      order = await Order.findOne({
+        _id: orderId,
+        $or: [{ passengerId: req.user._id }, { driverId: req.user._id }],
+      }).select("cityId");
+      // Do not distinguish a private order from a nonexistent one.
+      if (!order) throw new ApiError(404, "Заказ не найден");
+    }
+    const cityId = await complaintCityId(order, req.user);
+    if (!cityId)
+      throw new ApiError(400, "Укажите домашний город или заказ для жалобы");
     const complaint = await Complaint.create({
       reporterId: req.user._id,
       ...(orderId && { orderId }),
       ...(targetUserId && { targetUserId }),
-      ...(cityId && { cityId }),
+      cityId,
       type,
       text,
     });
@@ -210,13 +245,27 @@ exports.listComplaints = catchAsyncError(async (req, res) => {
   if (req.query.type) filter.type = req.query.type;
   // Region admins see only complaints of their region; superadmin sees all
   const scope = await regionAdminCityIds(req);
-  if (scope !== null) filter.cityId = { $in: scope };
+  if (scope !== null)
+    filter.$or = [{ cityId: { $in: scope } }, { cityId: null }];
 
-  const complaints = await Complaint.find(filter)
+  const cursor = Complaint.find(filter)
     .populate("reporterId", "username name")
     .populate("targetUserId", "username name")
     .sort({ createdAt: -1 })
-    .limit(200);
+    .cursor();
+  const complaints = [];
+  try {
+    for await (const complaint of cursor) {
+      const cityId = await effectiveComplaintCityId(complaint);
+      if (scope !== null && !scope.includes(String(cityId))) continue;
+      if (cityId) complaint.cityId = cityId;
+      complaints.push(complaint);
+      // Scope legacy rows before applying the response limit.
+      if (complaints.length === 200) break;
+    }
+  } finally {
+    await cursor.close();
+  }
 
   res.json({ status: "success", data: { complaints } });
 });
@@ -226,7 +275,8 @@ exports.reviewComplaint = catchAsyncError(async (req, res) => {
   const complaint = await Complaint.findById(req.params.id);
   if (!complaint) throw new ApiError(404, "Жалоба не найдена");
   const scope = await regionAdminCityIds(req);
-  if (scope !== null && !scope.includes(String(complaint.cityId)))
+  const cityId = await effectiveComplaintCityId(complaint);
+  if (scope !== null && !scope.includes(String(cityId)))
     throw new ApiError(404, "Жалоба не найдена");
   if (complaint.status !== "OPEN")
     throw new ApiError(409, "Жалоба уже обработана");
@@ -238,6 +288,7 @@ exports.reviewComplaint = catchAsyncError(async (req, res) => {
   complaint.status = status;
   complaint.resolution = resolution;
   complaint.resolvedBy = req.user._id;
+  if (!complaint.cityId && cityId) complaint.cityId = cityId;
   await complaint.save();
 
   await logAudit({

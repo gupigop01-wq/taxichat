@@ -4,6 +4,9 @@ const Order = require("../models/Order");
 const Rating = require("../models/Rating");
 const Complaint = require("../models/Complaint");
 const User = require("../models/User");
+const City = require("../models/City");
+const Membership = require("../models/Membership");
+const mongoose = require("mongoose");
 const { connectTestDb, disconnectTestDb } = require("./db");
 const { setupPilotCity, createOrder } = require("./orderSetup");
 const { registerUser } = require("./helpers");
@@ -164,6 +167,157 @@ describe("Complaints and SOS", () => {
       .send({ status: "RESOLVED", resolution: "Проведена беседа" });
     expect(resolved.status).toBe(200);
     expect(resolved.body.data.complaint.status).toBe("RESOLVED");
+  });
+
+  it("a referenced order must belong to the reporter before its city is returned", async () => {
+    const outsider = await registerUser(app);
+    for (const orderId of [order._id, String(new mongoose.Types.ObjectId())]) {
+      const denied = await request(app)
+        .post("/api/complaints")
+        .set("Cookie", outsider.cookie)
+        .send({ orderId, type: "other", text: "Private order probe" });
+      expect(denied.status).toBe(404);
+      expect(denied.body.message).toBe("Заказ не найден");
+      expect(denied.body.data).toBeUndefined();
+    }
+    expect(await Complaint.countDocuments()).toBe(0);
+
+    const driverComplaint = await request(app)
+      .post("/api/complaints")
+      .set("Cookie", world.drivers[0].cookie)
+      .send({ orderId: order._id, type: "behavior", text: "Participant complaint" });
+    expect(driverComplaint.status).toBe(201);
+    expect(driverComplaint.body.data.complaint.cityId).toBe(String(world.city._id));
+  });
+
+  it("an invalid referenced order id is rejected before saving a complaint", async () => {
+    const res = await request(app)
+      .post("/api/complaints")
+      .set("Cookie", world.passenger.cookie)
+      .send({ orderId: "not-an-id", type: "other", text: "Invalid order" });
+    expect(res.status).toBe(400);
+    expect(await Complaint.countDocuments()).toBe(0);
+  });
+
+  it("uses the single valid active membership city when the home city is missing", async () => {
+    const otherCity = await City.findOne({ _id: { $ne: world.city._id } });
+    await Membership.create([
+      { userId: world.passenger.user._id, cityId: world.city._id, role: "driver", status: "ACTIVE" },
+      { userId: world.passenger.user._id, cityId: otherCity._id, role: "passenger", status: "PENDING" },
+      { userId: world.passenger.user._id, cityId: new mongoose.Types.ObjectId(), role: "passenger", status: "ACTIVE" },
+    ]);
+    const created = await request(app)
+      .post("/api/complaints")
+      .set("Cookie", world.passenger.cookie)
+      .send({ type: "other", text: "No home city" });
+    expect(created.status).toBe(201);
+    expect(created.body.data.complaint.cityId).toBe(String(world.city._id));
+  });
+
+  it("rejects an ambiguous city or a reporter without any active membership", async () => {
+    const otherCity = await City.findOne({ _id: { $ne: world.city._id } });
+    await Membership.create({
+      userId: world.passenger.user._id,
+      cityId: otherCity._id,
+      role: "passenger",
+      status: "ACTIVE",
+    });
+    const waiting = await registerUser(app);
+    await Membership.create({
+      userId: waiting.user._id,
+      cityId: world.city._id,
+      role: "driver",
+      status: "PENDING",
+    });
+    for (const reporter of [world.passenger, waiting]) {
+      const rejected = await request(app)
+        .post("/api/complaints")
+        .set("Cookie", reporter.cookie)
+        .send({ type: "other", text: "Unrouteable complaint" });
+      expect(rejected.status).toBe(400);
+    }
+    expect(await Complaint.countDocuments()).toBe(0);
+  });
+
+  it("lists legacy local complaints read-only and backfills only an authorized review", async () => {
+    const admin = await registerUser(app);
+    await Membership.create({ userId: admin.user._id, cityId: world.city._id, role: "region_admin", status: "ACTIVE" });
+    const otherCity = await City.create({
+      name: "Foreign complaint city",
+      oktmo: "99" + Date.now(),
+      regionId: new mongoose.Types.ObjectId(),
+    });
+    const foreignOrder = await Order.create({ passengerId: world.passenger.user._id, cityId: otherCity._id });
+    await User.updateOne({ _id: world.passenger.user._id }, { $set: { homeCityId: world.city._id } });
+    const local = await Complaint.create({ reporterId: world.passenger.user._id, orderId: order._id, type: "sos", text: "Legacy local order" });
+    const foreign = await Complaint.create({ reporterId: world.passenger.user._id, orderId: foreignOrder._id, type: "sos", text: "Legacy foreign order" });
+    const home = await Complaint.create({ reporterId: world.passenger.user._id, cityId: null, type: "other", text: "Legacy home city" });
+    const membership = await Complaint.create({ reporterId: world.drivers[1].user._id, type: "other", text: "Legacy membership city" });
+    const orphan = await Complaint.create({ reporterId: new mongoose.Types.ObjectId(), type: "other", text: "Deleted reporter" });
+    await Membership.create({ userId: world.drivers[2].user._id, cityId: otherCity._id, role: "passenger", status: "ACTIVE" });
+    const ambiguous = await Complaint.create({ reporterId: world.drivers[2].user._id, type: "other", text: "Ambiguous legacy city" });
+    const before = await Complaint.find().lean();
+
+    const listed = await request(app).get("/api/admin/complaints").set("Cookie", admin.cookie);
+    expect(listed.status).toBe(200);
+    const ids = listed.body.data.complaints.map((item) => item._id);
+    expect(ids).toEqual(expect.arrayContaining([local, home, membership].map((item) => String(item._id))));
+    expect(ids).not.toContain(String(foreign._id));
+    expect(ids).not.toContain(String(orphan._id));
+    expect(ids).not.toContain(String(ambiguous._id));
+    expect(listed.body.data.complaints.every((item) => item.cityId === String(world.city._id))).toBe(true);
+    expect(await Complaint.find().lean()).toEqual(before);
+
+    const denied = await request(app)
+      .patch(`/api/admin/complaints/${foreign._id}`)
+      .set("Cookie", admin.cookie)
+      .send({ status: "DISMISSED" });
+    expect(denied.status).toBe(404);
+    expect(await Complaint.find().lean()).toEqual(before);
+
+    const all = await request(app).get("/api/admin/complaints").set("Cookie", world.superadmin.cookie);
+    expect(all.body.data.complaints.find((item) => item._id === String(foreign._id)).cityId).toBe(String(otherCity._id));
+    expect(all.body.data.complaints.map((item) => item._id)).toContain(String(ambiguous._id));
+    expect(await Complaint.find().lean()).toEqual(before);
+
+    const reviewed = await request(app)
+      .patch(`/api/admin/complaints/${local._id}`)
+      .set("Cookie", admin.cookie)
+      .send({ status: "RESOLVED", resolution: "Legacy complaint reviewed" });
+    expect(reviewed.status).toBe(200);
+    expect(reviewed.body.data.complaint.cityId).toBe(String(world.city._id));
+    expect((await Complaint.findById(local._id)).cityId.toString()).toBe(String(world.city._id));
+    expect((await Complaint.findById(foreign._id)).cityId).toBeUndefined();
+    expect((await Complaint.findById(home._id)).cityId).toBeNull();
+    expect((await Complaint.findById(membership._id)).cityId).toBeUndefined();
+  });
+
+  it("scopes legacy complaints before applying the 200-row list limit", async () => {
+    const admin = await registerUser(app);
+    await Membership.create({ userId: admin.user._id, cityId: world.city._id, role: "region_admin", status: "ACTIVE" });
+    const otherCity = await City.create({
+      name: "Foreign complaint city",
+      oktmo: "99" + Date.now(),
+      regionId: new mongoose.Types.ObjectId(),
+    });
+    const foreignOrder = await Order.create({ passengerId: world.passenger.user._id, cityId: otherCity._id });
+    const local = await Complaint.create({
+      reporterId: world.passenger.user._id,
+      orderId: order._id,
+      type: "other",
+      text: "Old local complaint",
+      createdAt: new Date(Date.now() - 24 * 60 * 60 * 1000),
+    });
+    await Complaint.insertMany(Array.from({ length: 201 }, () => ({
+      reporterId: world.passenger.user._id,
+      orderId: foreignOrder._id,
+      type: "other",
+      text: "Newer foreign complaint",
+    })));
+    const listed = await request(app).get("/api/admin/complaints?type=other&status=OPEN").set("Cookie", admin.cookie);
+    expect(listed.status).toBe(200);
+    expect(listed.body.data.complaints.map((item) => item._id)).toEqual([String(local._id)]);
+    expect(await Complaint.countDocuments({ cityId: { $exists: true } })).toBe(0);
   });
 });
 
