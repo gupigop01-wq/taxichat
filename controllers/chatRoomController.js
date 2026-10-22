@@ -6,7 +6,7 @@ const ReqError = require("../utilities/ReqError");
 
 // True when the user is a member of the legacy chat room
 exports.isChatRoomMember = async (chatRoomId, userId) => {
-  if (!userId || !mongoose.isValidObjectId(chatRoomId)) return false;
+  if (!mongoose.isObjectIdOrHexString(userId) || !mongoose.isObjectIdOrHexString(chatRoomId)) return false;
   return Boolean(await ChatRoom.exists({ _id: chatRoomId, members: userId }));
 };
 

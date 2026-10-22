@@ -1,6 +1,7 @@
 const socketIO = require("socket.io");
 const jwt = require("jsonwebtoken");
 const { setIo } = require("./utilities/sockets");
+const { catchSocketError } = require("./utilities/catchAsyncError");
 
 // Parses the handshake Cookie header into an object
 const parseCookies = (header) => {
@@ -10,9 +11,13 @@ const parseCookies = (header) => {
     if (!trimmed) continue;
     const separatorIndex = trimmed.indexOf("=");
     if (separatorIndex === -1) continue;
-    result[trimmed.slice(0, separatorIndex)] = decodeURIComponent(
-      trimmed.slice(separatorIndex + 1)
-    );
+    try {
+      result[trimmed.slice(0, separatorIndex)] = decodeURIComponent(
+        trimmed.slice(separatorIndex + 1)
+      );
+    } catch {
+      // Invalid URL-encoded cookies are not authentication credentials.
+    }
   }
   return result;
 };
@@ -82,7 +87,7 @@ const initSocket = (httpServer) => {
     next();
   });
 
-  io.on("connection", async (socket) => {
+  io.on("connection", (socket) => {
     // -------------Connection controls -------------- //
     // socket come online
     onlineController(io, socket);
@@ -142,11 +147,11 @@ const initSocket = (httpServer) => {
     registerDriverPresenceHandlers(io, socket);
     //--------------------------------------------------//
 
-    socket.on("disconnect", async () => {
+    socket.on("disconnect", catchSocketError(socket, async () => {
       if (socket.userId) {
         await callService.handleDisconnect(io, socket.userId);
       }
-    });
+    }));
   });
 
   return io;

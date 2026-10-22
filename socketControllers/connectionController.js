@@ -4,6 +4,7 @@ const {
 } = require("../controllers/chatRoomController");
 const User = require("../models/User");
 const Membership = require("../models/Membership");
+const { catchSocketError } = require("../utilities/catchAsyncError");
 
 exports.getSocketDetails = async (userId) => {
   // Get user model
@@ -34,7 +35,7 @@ exports.joinMembershipRooms = async (socket, userId) => {
 };
 
 exports.onlineController = (io, socket) => {
-  socket.on("user:online", async () => {
+  socket.on("user:online", catchSocketError(socket, async () => {
     // The verified userId from the handshake; client-provided ids are ignored
     const userId = socket.userId;
     if (!userId) return;
@@ -69,11 +70,11 @@ exports.onlineController = (io, socket) => {
 
     // Emit user online status in all rooms user is in
     socket.to(allRoomsUserIn).emit("user:online", userId);
-  });
+  }));
 };
 
 exports.offlineController = (io, socket) => {
-  socket.on("user:offline", async () => {
+  socket.on("user:offline", catchSocketError(socket, async () => {
     const { userId } = socket;
     if (!userId) return;
     // Get user detaiils
@@ -92,12 +93,12 @@ exports.offlineController = (io, socket) => {
     socket
       .to(allRoomsUserIn)
       .emit("user:offline", { userId: userModel._id, time });
-  });
+  }));
 };
 
 // socket disconnection
 exports.disconnectingController = (io, socket) => {
-  socket.on("disconnecting", async () => {
+  socket.on("disconnecting", catchSocketError(socket, async () => {
     if (!socket.userId) return;
     // Get user detaiils
     const { userModel, allRoomsUserIn } = await this.getSocketDetails(
@@ -117,17 +118,17 @@ exports.disconnectingController = (io, socket) => {
     socket
       .to(allRoomsUserIn)
       .emit("user:offline", { userId: userModel._id, time });
-  });
+  }));
 };
 
 exports.joinRoomController = (io, socket) => {
   // Only legacy chat rooms the verified user is a member of; system rooms
   // (user:, city:, zone:, order:) are never joinable from the client
-  socket.on("user:joinRooms", async (payload) => {
+  socket.on("user:joinRooms", catchSocketError(socket, async (payload) => {
     if (!socket.userId) return;
     const rooms = Array.isArray(payload?.rooms) ? payload.rooms : [];
     for (const room of rooms) {
       if (await isChatRoomMember(room, socket.userId)) socket.join(String(room));
     }
-  });
+  }));
 };

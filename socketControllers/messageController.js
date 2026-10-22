@@ -6,6 +6,7 @@ const {
   markMessageAsReadByUser,
   isChatRoomMember,
 } = require("../controllers/chatRoomController");
+const { catchSocketError } = require("../utilities/catchAsyncError");
 
 // Sliding-window flood guard: max 30 message packets per minute per socket
 const MESSAGE_RATE_LIMIT = 30;
@@ -26,7 +27,8 @@ const allowMessage = (socket) => {
 };
 
 exports.messagingController = (io, socket) => {
-  socket.on("user:message", async (payload) => {
+  socket.once("disconnect", () => messageBuckets.delete(socket.id));
+  socket.on("user:message", catchSocketError(socket, async (payload) => {
     const chatRoomId = payload?.chatRoomId;
     const message = payload?.message;
     if (!message || typeof message !== "object") return;
@@ -113,13 +115,13 @@ exports.messagingController = (io, socket) => {
           }
         }
       );
-  });
+  }));
 };
 
 exports.markMessageReadController = (io, socket) => {
   socket.on(
     "user:messageRead",
-    async ({ messageId, chatRoomId, day } = {}) => {
+    catchSocketError(socket, async ({ messageId, chatRoomId, day } = {}) => {
       if (!(await isChatRoomMember(chatRoomId, socket.userId))) return;
       await markMessageAsReadByUser({
         messageId,
@@ -128,12 +130,12 @@ exports.markMessageReadController = (io, socket) => {
         userId: socket.userId,
         io,
       });
-    }
+    })
   );
 
   socket.on(
     "user:markMessagesAsRead",
-    async ({ messages, chatRoomId } = {}) => {
+    catchSocketError(socket, async ({ messages, chatRoomId } = {}) => {
       if (!Array.isArray(messages)) return;
       if (!(await isChatRoomMember(chatRoomId, socket.userId))) return;
       for (let { messageId, day } of messages) {
@@ -145,6 +147,6 @@ exports.markMessageReadController = (io, socket) => {
           io,
         });
       }
-    }
+    })
   );
 };

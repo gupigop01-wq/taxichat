@@ -24,5 +24,19 @@ function validateBody(schema) {
   };
 }
 
+// Socket.IO does not await listeners: rejected promises must be contained.
+function catchSocketError(socket, handler) {
+  return (...args) => Promise.resolve()
+    .then(() => handler(...args))
+    .catch((error) => {
+      console.error("Socket handler failed:", error.message ?? error);
+      const response = { error: "Не удалось обработать запрос чата" };
+      const ack = args[args.length - 1];
+      if (typeof ack === "function") ack(response);
+      else socket.emit("chat:error", response);
+    });
+}
+
 module.exports = catchAsyncError;
 module.exports.validateBody = validateBody;
+module.exports.catchSocketError = catchSocketError;
