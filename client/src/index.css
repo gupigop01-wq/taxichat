@@ -569,3 +569,70 @@ input[type="range"].time-range::-moz-range-thumb {
   background: #f7c700;
   box-shadow: 0 0 18px rgba(247, 199, 0, 0.5);
 }
+
+/* PWA install gate: the app is available only as an installed application */
+.install-gate {
+  position: fixed;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 16px;
+  overflow-y: auto;
+  background: radial-gradient(ellipse 70% 40% at 50% 0%, rgba(247,199,0,.12), transparent), #0d0d0d;
+  color: #fff;
+}
+.install-gate-card {
+  width: 100%;
+  max-width: 26rem;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 10px;
+  padding: 26px 20px;
+  text-align: center;
+  border: 1px solid rgba(255,255,255,.1);
+  border-radius: 24px;
+  background: #171717;
+}
+.install-gate-logo img {
+  display: block;
+  border-radius: 20px;
+  box-shadow: 0 10px 30px rgba(0,0,0,.5);
+}
+.install-gate-title { font-size: 2.8rem; line-height: 1.1; }
+.install-gate-sub { font-size: 1.2rem; color: #9c9c9c; letter-spacing: .04em; }
+.install-gate-text { font-size: 1.35rem; line-height: 1.45; color: #cfcfcf; margin-top: 6px; }
+.install-gate-button {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  width: 100%;
+  min-height: 52px;
+  margin-top: 6px;
+  border-radius: 16px;
+  color: #111;
+  font-weight: 800;
+  font-size: 1.4rem;
+}
+.install-gate-button:disabled { opacity: .6; }
+.install-gate-hint {
+  font-size: 1.2rem;
+  line-height: 1.4;
+  color: #f7c700;
+  border: 1px dashed rgba(247,199,0,.4);
+  border-radius: 12px;
+  padding: 8px 10px;
+}
+.install-gate-points {
+  width: 100%;
+  margin-top: 8px;
+  padding-top: 14px;
+  border-top: 1px solid rgba(255,255,255,.08);
+  display: grid;
+  gap: 8px;
+  text-align: left;
+  font-size: 1.25rem;
+  color: #b9b9b9;
+}

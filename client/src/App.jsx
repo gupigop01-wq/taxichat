@@ -8,6 +8,7 @@ import TaxiApp from "./taxi/TaxiApp";
 import useInit from "./hooks/useInit";
 import Notification from "./components/globals/Notification";
 import { DialogProvider } from "./taxi/AppDialog";
+import { PwaGate } from "./taxi/PwaGate";
 import { useSelector } from "react-redux";
 import useAppHeight from "./hooks/useAppHeight";
 
@@ -18,6 +19,7 @@ function App() {
   useAppHeight();
 
   return (
+    <PwaGate>
     <DialogProvider>
     <div className="w-full h-full flex overflow-hidden bg-primary relative">
       {loggedIn && (
@@ -41,6 +43,7 @@ function App() {
       {modalType === "voiceCallModal" && <VoiceCallModal />}
     </div>
     </DialogProvider>
+    </PwaGate>
   );
 }
 
