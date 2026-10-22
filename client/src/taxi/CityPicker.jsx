@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useId, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { cityStatusEmoji, cityStatusShort } from "./statusLabels";
 import { IconText } from "./TaxiIcon";
@@ -16,6 +16,9 @@ const CityPicker = ({ cities, cityId, onSelect }) => {
   const [rect, setRect] = useState(null);
   const rootRef = useRef(null);
   const triggerRef = useRef(null);
+  const panelRef = useRef(null);
+  const focusLastRef = useRef(false);
+  const listId = useId();
   const current = cities.find((item) => String(item._id) === String(cityId));
 
   const sorted = useMemo(
@@ -52,19 +55,36 @@ const CityPicker = ({ cities, cityId, onSelect }) => {
     };
   }, [open]);
 
+  useEffect(() => {
+    if (!open) return;
+    const options = panelRef.current?.querySelectorAll('[role="option"]');
+    const option = focusLastRef.current
+      ? options?.[options.length - 1]
+      : panelRef.current?.querySelector('[aria-selected="true"]') ?? options?.[0];
+    (option ?? panelRef.current?.querySelector("button"))?.focus();
+  }, [open]);
+
   // Close on a click outside the picker or on Escape
   useEffect(() => {
     if (!open) return undefined;
-    const onClick = (event) => {
-      if (rootRef.current && !rootRef.current.contains(event.target)) setOpen(false);
+    const onOutside = (event) => {
+      if (!rootRef.current?.contains(event.target) && !panelRef.current?.contains(event.target)) {
+        setOpen(false);
+      }
     };
     const onKey = (event) => {
-      if (event.key === "Escape") setOpen(false);
+      if (event.key === "Escape") {
+        event.preventDefault();
+        setOpen(false);
+        triggerRef.current?.focus();
+      }
     };
-    document.addEventListener("click", onClick);
+    document.addEventListener("click", onOutside);
+    document.addEventListener("focusin", onOutside);
     document.addEventListener("keydown", onKey);
     return () => {
-      document.removeEventListener("click", onClick);
+      document.removeEventListener("click", onOutside);
+      document.removeEventListener("focusin", onOutside);
       document.removeEventListener("keydown", onKey);
     };
   }, [open]);
@@ -73,33 +93,65 @@ const CityPicker = ({ cities, cityId, onSelect }) => {
     onSelect(String(item._id));
     setOpen(false);
     setLetter(null);
+    triggerRef.current?.focus();
+  };
+
+  const onNavigate = (event) => {
+    if (!["ArrowDown", "ArrowUp", "Home", "End"].includes(event.key)) return;
+    const options = [...panelRef.current.querySelectorAll('[role="option"]')];
+    const index = options.indexOf(event.target);
+    if (index < 0) return;
+    event.preventDefault();
+    const next = event.key === "Home" ? 0
+      : event.key === "End" ? options.length - 1
+      : (index + (event.key === "ArrowDown" ? 1 : -1) + options.length) % options.length;
+    options[next].focus();
+    options[next].scrollIntoView?.({ block: "nearest" });
   };
 
   // Geometry: full width on phones, anchored panel on desktop; open below the
   // trigger when there is room, otherwise above it.
-  const vw = typeof window === "undefined" ? 360 : window.innerWidth;
-  const vh = typeof window === "undefined" ? 800 : window.innerHeight;
-  const width = Math.max(PANEL_MIN_WIDTH, Math.min(rect?.width ?? PANEL_MIN_WIDTH, vw - 16));
-  const left = Math.min(Math.max(rect?.left ?? 8, 8), vw - width - 8);
-  const spaceBelow = rect ? vh - rect.bottom : vh / 2;
-  const openAbove = Boolean(rect) && spaceBelow < 220;
-  const maxHeight = rect
-    ? Math.max(180, Math.min(vh * 0.62, openAbove ? rect.top - 20 : vh - rect.bottom - 16))
-    : Math.round(vh * 0.62);
-  const panelTop = rect
+  const viewport = typeof window === "undefined" ? null : window.visualViewport;
+  const vw = viewport?.width ?? (typeof window === "undefined" ? 360 : window.innerWidth);
+  const vh = viewport?.height ?? (typeof window === "undefined" ? 800 : window.innerHeight);
+  const viewportLeft = viewport?.offsetLeft ?? 0;
+  const viewportTop = viewport?.offsetTop ?? 0;
+  const width = Math.min(Math.max(0, vw - 16), Math.max(PANEL_MIN_WIDTH, rect?.width ?? PANEL_MIN_WIDTH));
+  const left = Math.max(viewportLeft + 8, Math.min(rect?.left ?? 8, viewportLeft + vw - width - 8));
+  const spaceBelow = rect ? viewportTop + vh - rect.bottom - PANEL_GAP - 8 : vh / 2;
+  const spaceAbove = rect ? rect.top - viewportTop - PANEL_GAP - 8 : vh / 2;
+  const openAbove = Boolean(rect) && spaceBelow < 220 && spaceAbove > spaceBelow;
+  const maxHeight = Math.min(Math.max(0, vh - 16), Math.max(180, Math.min(vh * 0.62, openAbove ? spaceAbove : spaceBelow)));
+  const anchorTop = rect
     ? openAbove
       ? rect.top - maxHeight - PANEL_GAP
       : rect.bottom + PANEL_GAP
     : vh / 2 - maxHeight / 2;
+  const panelTop = Math.max(viewportTop + 8, Math.min(anchorTop, viewportTop + vh - maxHeight - 8));
 
   return (
     <div ref={rootRef} className="relative w-full">
       <button
         ref={triggerRef}
+        type="button"
         className="press w-full min-h-[42px] flex items-center justify-between gap-2 rounded-[14px] border border-white/10 bg-[#252525] px-3 py-2 text-[1.3rem]"
-        onClick={() => setOpen((value) => !value)}
+        onClick={() => {
+          if (!open) {
+            focusLastRef.current = false;
+            measure();
+          }
+          setOpen((value) => !value);
+        }}
+        onKeyDown={(event) => {
+          if (event.key !== "ArrowDown" && event.key !== "ArrowUp") return;
+          event.preventDefault();
+          focusLastRef.current = event.key === "ArrowUp";
+          measure();
+          setOpen(true);
+        }}
         aria-expanded={open}
         aria-haspopup="listbox"
+        aria-controls={open ? listId : undefined}
       >
         <span className="flex items-center gap-2 min-w-0">
            <span aria-hidden><IconText>📍</IconText></span>
@@ -115,6 +167,8 @@ const CityPicker = ({ cities, cityId, onSelect }) => {
 
       {open && rect && createPortal(
         <div
+          ref={panelRef}
+          onKeyDown={onNavigate}
           style={{ position: "fixed", left, top: panelTop, width, maxHeight }}
           className="z-[100000] glass-strong rounded-2xl overflow-hidden flex flex-col shadow-2xl"
         >
@@ -133,7 +187,7 @@ const CityPicker = ({ cities, cityId, onSelect }) => {
               </button>
             ))}
           </div>
-          <div className="overflow-y-auto overscroll-contain p-2 flex flex-col gap-1.5" role="listbox" aria-label="Города">
+          <div id={listId} className="overflow-y-auto overscroll-contain p-2 flex flex-col gap-1.5" role="listbox" aria-label="Города">
             {shown.map((item) => {
               const selected = String(item._id) === String(cityId);
               return (
