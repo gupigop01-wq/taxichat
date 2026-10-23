@@ -90,11 +90,15 @@ const toDriverView = (order, { viewerId, passenger } = {}) => {
   return view;
 };
 
-// Dispatcher sees everything within his city, including exact addresses
+// Dispatcher sees everything within his city, including exact addresses and
+// both contact phones (he dials them himself; the personal number of the
+// dispatcher is never given out, passengers call the city line instead)
 const toDispatcherView = (order, { driverProfile, passenger } = {}) => ({
   ...baseView(order),
   passengerId: order.passengerId,
-  ...(passenger?.name && { passenger: { name: passenger.name } }),
+  ...(passenger && {
+    passenger: { name: passenger.name, phone: passenger.phone ?? null },
+  }),
   exactFrom: order.exactFrom,
   exactTo: order.exactTo,
   priceAgreed: order.priceAgreed,

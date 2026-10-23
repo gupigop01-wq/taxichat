@@ -323,6 +323,9 @@ const OrderChat = ({ orderId, me, onBack, startCall }) => {
     : myRole === "driver" && order.passenger?.name
       ? order.passenger.name
       : null;
+  // The dispatcher dials the participants himself: a plain phone call from
+  // the city line, so the passenger never sees a personal number
+  const callable = (phone) => (phone ? `tel:${String(phone).replace(/[^\d+]/g, "")}` : null);
 
   return (
     <div className="flex flex-col h-full">
@@ -344,6 +347,33 @@ const OrderChat = ({ orderId, me, onBack, startCall }) => {
               {myRole === "passenger"
                 ? <><TaxiIcon name="driver" className="inline-block align-[-0.2em]" /> {peerLine}</>
                 : <><TaxiIcon name="passenger" className="inline-block align-[-0.2em]" /> {peerLine}</>}
+            </div>
+          )}
+          {myRole === "dispatcher" && (order.passenger?.name || order.driver?.displayName) && (
+            <div className="mt-1 space-y-1 text-[1.4rem]">
+              {order.passenger?.name && (
+                <div className="flex flex-wrap items-center gap-2">
+                  <span className="text-secondary-text">Пассажир: {order.passenger.name}</span>
+                  {callable(order.passenger.phone) && (
+                    <a className="text-cta-icon font-semibold underline" href={callable(order.passenger.phone)}>
+                      Позвонить
+                    </a>
+                  )}
+                </div>
+              )}
+              {order.driver?.displayName && (
+                <div className="flex flex-wrap items-center gap-2">
+                  <span className="text-secondary-text">
+                    Водитель: {order.driver.displayName}
+                    {order.driver.carCaption ? ` · ${order.driver.carCaption}` : ""}
+                  </span>
+                  {callable(order.driver.phone) && (
+                    <a className="text-cta-icon font-semibold underline" href={callable(order.driver.phone)}>
+                      Позвонить
+                    </a>
+                  )}
+                </div>
+              )}
             </div>
           )}
         </div>

@@ -140,7 +140,7 @@ const serializeOrderFor = async (order, req, cache = null) => {
     : await driverProfileForOrder(order);
   const passengerUser = cache
     ? (cache.passengerById.get(String(order.passengerId)) ?? null)
-    : await User.findById(order.passengerId).select("name");
+    : await User.findById(order.passengerId).select("name phone");
 
   if (String(order.passengerId) === viewerId) {
     return toPassengerView(order, { driverProfile });
@@ -394,7 +394,7 @@ exports.listOrders = catchAsyncError(async (req, res) => {
   }
   const passengerUsers = await User.find({
     _id: { $in: [...new Set(orders.map((order) => String(order.passengerId)))] },
-  }).select("_id name");
+  }).select("_id name phone");
   const passengerById = new Map(
     passengerUsers.map((user) => [String(user._id), user])
   );

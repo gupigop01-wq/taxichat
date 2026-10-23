@@ -141,3 +141,34 @@ describe("passenger phone", () => {
     expect(created.status).toBe(400);
   });
 });
+
+describe("contact phones in the order view", () => {
+  it("gives both phones to the dispatcher and keeps the passenger phone from the driver", async () => {
+    const world = await setupPilotCity(app);
+    await User.findByIdAndUpdate(world.passenger.user._id, { phone: "+79021112233" });
+    const created = await createOrder(app, world.passenger, world.city, { matchMode: "first_take" });
+    const orderId = created.body.data.order._id;
+    await request(app)
+      .post(`/api/orders/${orderId}/accept`)
+      .set("Cookie", world.drivers[0].cookie)
+      .send({});
+
+    const forDispatcher = await request(app)
+      .get(`/api/orders/${orderId}`)
+      .set("Cookie", world.dispatcher.cookie);
+    expect(forDispatcher.status).toBe(200);
+    expect(forDispatcher.body.data.order.passenger.phone).toBe("+79021112233");
+    expect(forDispatcher.body.data.order.driver.phone).toBeTruthy();
+
+    const forDriver = await request(app)
+      .get(`/api/orders/${orderId}`)
+      .set("Cookie", world.drivers[0].cookie);
+    expect(forDriver.status).toBe(200);
+    expect(forDriver.body.data.order.passenger.phone).toBeUndefined();
+
+    const forPassenger = await request(app)
+      .get(`/api/orders/${orderId}`)
+      .set("Cookie", world.passenger.cookie);
+    expect(forPassenger.body.data.order.passenger?.phone).toBeUndefined();
+  });
+});
