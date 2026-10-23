@@ -260,6 +260,12 @@ const DriverPanel = ({ me, cityId, driverProfile, refreshMe, startCall }) => {
         {linked ? "Связь с сервером есть" : "Нет связи: смена статуса недоступна"}
         {shiftPending && " · Ожидаем подтверждения смены"}
       </div>
+      {/* A dispatcher may take the driver off the line: show why */}
+      {!online && driverProfile?.shiftNote && (
+        <div className="text-[1.4rem] text-danger" role="alert">
+          Диспетчер снял вас с линии: {driverProfile.shiftNote}. Выйдите на линию, когда будете готовы.
+        </div>
+      )}
       </div>
 
       {error && <div className="text-danger text-sm">{error}</div>}

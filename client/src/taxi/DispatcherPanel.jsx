@@ -25,7 +25,15 @@ const DispatcherPanel = ({ cityId, role, me }) => {
   const [sos, setSos] = useState([]);
   const [sosBusy, setSosBusy] = useState(null);
   // City dispatch line (number + note) edited by the shift
-  const [citySettings, setCitySettings] = useState({ dispatchPhone: null, dispatchPhoneNote: "" });
+  const [citySettings, setCitySettings] = useState({
+    dispatchPhone: null,
+    dispatchPhoneNote: "",
+    waitingMinutes: 10,
+    preorderLeadMinutes: 30,
+    directOrderTimeoutMin: 10,
+    cascadeTimeouts: { favorites: 20, zone: 60, neighbors: 120, city: 300, expire: 600 },
+  });
+  const [offlineBusy, setOfflineBusy] = useState(null);
   const [view, setView] = useState(null);
   const [adminTab, setAdminTab] = useState("applications");
   const [assigning, setAssigning] = useState({});
@@ -66,6 +74,66 @@ const DispatcherPanel = ({ cityId, role, me }) => {
       dispatch(notificationActions.addNotification({ message: "Диспетчерская линия обновлена", type: "success" }));
     } catch (err) {
       setError(err.message);
+    }
+  };
+
+  const editTimers = async () => {
+    const answer = await ask({
+      title: "Таймеры города",
+      placeholder: "Ожидание (мин) · истечение заказа (с) · предзаказ (мин)",
+      initial: [
+        citySettings.waitingMinutes,
+        citySettings.cascadeTimeouts?.expire,
+        citySettings.preorderLeadMinutes,
+      ].join(" · "),
+      okText: "Сохранить",
+    });
+    if (!answer) return;
+    const [waiting, expire, lead] = answer
+      .split(/[·;,]/)
+      .map((part) => Number(part.trim()))
+      .filter((value) => Number.isFinite(value) && value > 0);
+    if (waiting === undefined) return;
+    try {
+      const res = await apiPatch(`/api/dispatch/${cityId}/timers`, {
+        ...(waiting && { waitingMinutes: waiting }),
+        ...(expire && { cascadeTimeouts: { expire } }),
+        ...(lead && { preorderLeadMinutes: lead }),
+      });
+      setCitySettings(res.data.settings);
+      dispatch(notificationActions.addNotification({ message: "Таймеры города обновлены", type: "success" }));
+    } catch (err) {
+      setError(err.message);
+    }
+  };
+
+  const forceOffline = async (driver) => {
+    const reason = await ask({
+      title: `Снять с линии: ${driver.displayName}`,
+      placeholder: "Причина (водитель увидит её в приложении)",
+      okText: "Снять с линии",
+      danger: true,
+    });
+    if (!reason || reason.trim().length < 3) return;
+    try {
+      setOfflineBusy(driver._id);
+      const res = await apiPatch(`/api/dispatch/${cityId}/drivers/${driver._id}/offline`, {
+        reason: reason.trim(),
+      });
+      setActiveDrivers((current) => current.filter((item) => item._id !== driver._id));
+      dispatch(
+        notificationActions.addNotification({
+          message: res.data?.activeOrderId
+            ? "Водитель снят с линии, активный заказ остался у него"
+            : "Водитель снят с линии",
+          type: "success",
+        })
+      );
+    } catch (err) {
+      setError(err.message);
+      load();
+    } finally {
+      setOfflineBusy(null);
     }
   };
 
@@ -557,6 +625,48 @@ const DispatcherPanel = ({ cityId, role, me }) => {
           {inProgress.map(queueCard)}
         </div>
       </div>
+      {/* Водители на линии: снять с линии можно с обязательной причиной */}
+      <div>
+        <h3 className="font-display font-bold mb-2 tracking-wide">На линии · {activeDrivers.length}</h3>
+        <div className="space-y-2">
+          {activeDrivers.length === 0 && (
+            <div className="text-sm text-secondary-text">Никого на линии</div>
+          )}
+          {activeDrivers.map((driver) => (
+            <div key={driver._id} className="glass rounded-xl p-3 flex flex-wrap items-center gap-2 justify-between">
+              <div className="min-w-0">
+                <div className="font-semibold truncate">{driver.displayName}</div>
+                <div className="text-xs text-secondary-text truncate">{driver.carCaption || "без машины"}</div>
+              </div>
+              {driver.phone && (
+                <a className="text-cta-icon underline text-sm" href={callLink(driver.phone)}>
+                  Позвонить
+                </a>
+              )}
+              <button
+                className="text-danger underline text-sm disabled:opacity-50"
+                disabled={offlineBusy === driver._id}
+                onClick={() => forceOffline(driver)}
+              >
+                {offlineBusy === driver._id ? "Снимаем…" : "Снять с линии"}
+              </button>
+            </div>
+          ))}
+        </div>
+      </div>
+
+      {/* Операционные настройки: таймеры смены */}
+      <div className="glass rounded-2xl p-3 space-y-2">
+        <div className="font-semibold">Таймеры города</div>
+        <div className="text-sm text-secondary-text">
+          Ожидание пассажира: {citySettings.waitingMinutes} мин · истечение заказа:{" "}
+          {citySettings.cascadeTimeouts?.expire} с · предзаказ за {citySettings.preorderLeadMinutes} мин
+        </div>
+        <button className="underline text-sm" onClick={editTimers}>
+          Изменить таймеры
+        </button>
+      </div>
+
     </div>
   );
 };

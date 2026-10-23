@@ -38,6 +38,13 @@ exports.registerDriverPresenceHandlers = (io, socket) => {
       const context = await driverProfileFor(socket.userId);
       if (!context?.profile) return;
 
+      // Going back online clears the note a dispatcher left when he took the
+      // driver off the line
+      if (shift === "online") {
+        context.profile.shiftNote = null;
+        context.profile.shiftChangedBy = undefined;
+        context.profile.shiftChangedAt = undefined;
+      }
       context.profile.shift = shift;
       context.profile.lastSeen = new Date();
       await context.profile.save();

@@ -47,6 +47,9 @@ const orderSchema = new mongoose.Schema(
       index: true,
     },
     driverId: { type: mongoose.Schema.Types.ObjectId, ref: "User", index: true },
+    // A dispatcher took the driver off the line while this order was active;
+    // the order stays with the driver, the note is shown to him
+    driverOfflineNote: { type: String, default: null },
     cityId: {
       type: mongoose.Schema.Types.ObjectId,
       ref: "City",

@@ -32,6 +32,10 @@ const driverProfileSchema = new mongoose.Schema(
     },
     car: { type: carSchema, required: true },
     shift: { type: String, enum: ["online", "busy", "offline"], default: "offline" },
+    // Set when a dispatcher takes the driver off the line: the driver sees why
+    shiftNote: { type: String, default: null },
+    shiftChangedBy: { type: mongoose.Schema.Types.ObjectId, ref: "User" },
+    shiftChangedAt: Date,
     lastSeen: Date,
     // Driver can stop accepting direct calls without leaving the shift
     acceptDirectCalls: { type: Boolean, default: true },

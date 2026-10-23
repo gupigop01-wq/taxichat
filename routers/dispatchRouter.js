@@ -16,6 +16,10 @@ router.route("/:cityId/sos").get(reputationController.listCitySos);
 // Operational settings of the city (dispatch line)
 router.route("/:cityId/settings").get(cityController.getCitySettings);
 router.route("/:cityId/dispatch-phone").patch(cityController.setDispatchPhone);
+router.route("/:cityId/timers").patch(cityController.setCityTimers);
+router
+  .route("/:cityId/drivers/:membershipId/offline")
+  .patch(cityController.forceDriverOffline);
 
 router.route("/:cityId/drivers").get(dispatchController.listDrivers);
 router.route("/drivers/:membershipId").patch(dispatchController.reviewDriver);

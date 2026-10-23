@@ -205,3 +205,54 @@ describe("city dispatch line", () => {
     expect(outsider.status).toBe(403);
   });
 });
+
+describe("operational city settings", () => {
+  it("lets the shift change the timers within the allowed range", async () => {
+    const world = await setupPilotCity(app);
+    const saved = await request(app)
+      .patch(`/api/dispatch/${world.city._id}/timers`)
+      .set("Cookie", world.dispatcher.cookie)
+      .send({ waitingMinutes: 5, cascadeTimeouts: { expire: 900 } });
+    expect(saved.status).toBe(200);
+    expect(saved.body.data.settings.waitingMinutes).toBe(5);
+    expect(saved.body.data.settings.cascadeTimeouts.expire).toBe(900);
+
+    const tooHuge = await request(app)
+      .patch(`/api/dispatch/${world.city._id}/timers`)
+      .set("Cookie", world.dispatcher.cookie)
+      .send({ waitingMinutes: 999 });
+    expect(tooHuge.status).toBe(400);
+  });
+
+  it("takes a driver off the line with a reason and keeps his active order", async () => {
+    const world = await setupPilotCity(app);
+    const DriverProfile = require("../models/DriverProfile");
+    const driver = world.drivers[0];
+    const membership = await require("../models/Membership").findOne({
+      userId: driver.user._id,
+      role: "driver",
+    });
+    await DriverProfile.findOneAndUpdate(
+      { membershipId: membership._id },
+      { shift: "online" },
+      { upsert: true }
+    );
+
+    const res = await request(app)
+      .patch(`/api/dispatch/${world.city._id}/drivers/${membership._id}/offline`)
+      .set("Cookie", world.dispatcher.cookie)
+      .send({ reason: "Жалобы пассажиров" });
+    expect(res.status).toBe(200);
+    expect(res.body.data.shift).toBe("offline");
+
+    const profile = await DriverProfile.findOne({ membershipId: membership._id });
+    expect(profile.shift).toBe("offline");
+    expect(profile.shiftNote).toBe("Жалобы пассажиров");
+
+    const noReason = await request(app)
+      .patch(`/api/dispatch/${world.city._id}/drivers/${membership._id}/offline`)
+      .set("Cookie", world.dispatcher.cookie)
+      .send({ reason: "" });
+    expect(noReason.status).toBe(400);
+  });
+});
