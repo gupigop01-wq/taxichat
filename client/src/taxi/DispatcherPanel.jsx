@@ -45,6 +45,7 @@ const DispatcherPanel = ({ cityId, role, me }) => {
   };
 
   const loadAdmin = async (tab) => {
+    if (!isRegionAdmin) return;
     try {
       if (tab === "applications") {
         const res = await apiGet("/api/admin/applications?type=dispatcher");
@@ -80,9 +81,11 @@ const DispatcherPanel = ({ cityId, role, me }) => {
     };
   }, [cityId]);
 
+  // The admin sections (applications, complaints, audit) are region-admin only;
+  // a dispatcher must not request them or see their 403 as a panel error.
   useEffect(() => {
-    if (adminTab) loadAdmin(adminTab);
-  }, [adminTab]);
+    if (isRegionAdmin && adminTab) loadAdmin(adminTab);
+  }, [adminTab, isRegionAdmin]);
 
   if (view) {
     return <OrderChat orderId={view} me={me} onBack={() => setView(null)} startCall={() => {}} />;
