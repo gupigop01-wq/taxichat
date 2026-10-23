@@ -95,3 +95,46 @@ describe("push subscriptions API", () => {
   });
 });
 
+describe("new order fan-out", () => {
+  const subscribe = async (userId) => {
+    const PushSubscription = require("../models/PushSubscription");
+    await PushSubscription.create({
+      userId,
+      endpoint: `https://push.example/${userId}`,
+      keys: goodSubscription.keys,
+    });
+  };
+
+  it("notifies on-the-go drivers plus the dispatcher and region admin of the city", async () => {
+    process.env.VAPID_PUBLIC_KEY = "BTestPublic";
+    process.env.VAPID_PRIVATE_KEY = "TestPrivate";
+    pushService.__resetConfiguredForTests();
+    pushService.configure();
+    const City = require("../models/City");
+    const Membership = require("../models/Membership");
+    const city =
+      (await City.findOne({ name: "Слюдянка" })) ||
+      (await City.create({ name: "Слюдянка", oktmo: "25" + Date.now() }));
+    const people = {};
+    for (const role of ["driver", "dispatcher", "region_admin"]) {
+      const session = await registerUser(app);
+      people[role] = session.user._id;
+      await Membership.create({ userId: session.user._id, cityId: city._id, role, status: "ACTIVE" });
+      await subscribe(session.user._id);
+    }
+
+    const result = await pushService.notifyNewOrder(
+      { _id: "000000000000000000000001", cityId: city._id, from: { text: "Вокзал" }, to: { text: "Рынок" } },
+      {}
+    );
+
+    expect(result.drivers.sent).toBe(1);
+    expect(result.staff.sent).toBe(2);
+    const webpush = require("web-push");
+    const endpoints = webpush.sendNotification.mock.calls.map(([subscription]) => subscription.endpoint);
+    for (const userId of Object.values(people)) {
+      expect(endpoints).toContain(`https://push.example/${userId}`);
+    }
+  });
+});
+

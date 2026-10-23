@@ -42,15 +42,36 @@ const sendPushToUser = async (userId, payload) => {
     (subscription, index) =>
       results[index].status === "rejected" && [404, 410].includes(results[index].reason?.statusCode)
   ).map((subscription) => subscription._id);
+  results.forEach((result, index) => {
+    const tail = subscriptions[index].endpoint.slice(-10);
+    if (result.status === "fulfilled") {
+      console.log(`[push] sent ${payload?.kind ?? "?"} ...${tail} status=${result.value?.statusCode}`);
+    } else {
+      console.warn(`[push] failed ${payload?.kind ?? "?"} ...${tail} ${result.reason?.statusCode ?? ""} ${result.reason?.message ?? ""}`);
+    }
+  });
   if (deadIds.length) await PushSubscription.deleteMany({ _id: { $in: deadIds } });
   return { sent: subscriptions.length - deadIds.length, failed: deadIds.length };
 };
 
 // Pushes to every active driver of a city (new order fan-out on the go).
-const sendPushToCityDrivers = async (cityId, payload, { excludeUserId } = {}) => {
+const sendPushToCityDrivers = async (cityId, payload, { excludeUserId } = {}) =>
+  sendPushToCityRole(cityId, "driver", payload, { excludeUserId });
+
+// Pushes to the dispatchers and the region admin of a city.
+const sendPushToCityStaff = async (cityId, payload, { excludeUserId } = {}) => {
+  const results = await Promise.all(
+    ["dispatcher", "region_admin"].map((role) =>
+      sendPushToCityRole(cityId, role, payload, { excludeUserId })
+    )
+  );
+  return { sent: results.filter((result) => result.sent > 0).length };
+};
+
+const sendPushToCityRole = async (cityId, role, payload, { excludeUserId } = {}) => {
   if (!configure()) return { sent: 0, skipped: "push-not-configured" };
   const Membership = require("../models/Membership");
-  const memberships = await Membership.find({ cityId, role: "driver", status: "ACTIVE" }).select("userId");
+  const memberships = await Membership.find({ cityId, role, status: "ACTIVE" }).select("userId");
   const recipientIds = memberships
     .map((membership) => String(membership.userId))
     .filter((id) => id !== String(excludeUserId ?? ""));
@@ -120,7 +141,8 @@ const notifyNewOffer = async (order, offer, { driverName, priceText, etaMin } = 
   return sendPushToUser(order.passengerId ?? order.passenger, payload);
 };
 
-// New published order for the drivers of the city.
+// New published order for the drivers of the city and the city staff
+// (dispatcher and region admin see the order in their queue and watch it).
 const notifyNewOrder = async (order, { excludeUserId } = {}) => {
   if (!configure()) return { sent: 0, skipped: "push-not-configured" };
   const payload = {
@@ -134,7 +156,11 @@ const notifyNewOrder = async (order, { excludeUserId } = {}) => {
     requireInteraction: true,
     actions: [{ action: "open", title: "Открыть" }],
   };
-  return sendPushToCityDrivers(order.cityId, payload, { excludeUserId });
+  const [drivers, staff] = await Promise.all([
+    sendPushToCityDrivers(order.cityId, payload, { excludeUserId }),
+    sendPushToCityStaff(order.cityId, { ...payload, kind: "new-order-staff" }, { excludeUserId }),
+  ]);
+  return { sent: Math.max(drivers.sent ?? 0, staff.sent ?? 0), drivers, staff };
 };
 
 
@@ -167,6 +193,7 @@ module.exports = {
   publicKey,
   sendPushToUser,
   sendPushToCityDrivers,
+  sendPushToCityStaff,
   notifyOrderStatus,
   notifyNewOffer,
   notifyNewOrder,

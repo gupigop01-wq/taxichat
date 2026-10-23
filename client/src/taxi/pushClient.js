@@ -31,7 +31,15 @@ export const enablePushNotifications = async () => {
   if (permission === "default") {
     permission = await Notification.requestPermission();
   }
-  if (permission !== "granted") return { ok: false, reason: "Разрешение не выдано" };
+  if (permission !== "granted") {
+    return {
+      ok: false,
+      reason:
+        permission === "denied"
+          ? "Уведомления для сайта заблокированы. Откройте меню Chrome → «Настройки сайтов» → «Уведомления» и разрешите их."
+          : "Разрешение не выдано",
+    };
+  }
 
   const registration = await navigator.serviceWorker.ready;
   const { data } = await apiGet("/api/push/vapid-public");
