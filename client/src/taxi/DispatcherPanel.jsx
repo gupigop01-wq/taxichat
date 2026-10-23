@@ -24,6 +24,8 @@ const DispatcherPanel = ({ cityId, role, me }) => {
   // its own status so two dispatchers never overwrite each other
   const [sos, setSos] = useState([]);
   const [sosBusy, setSosBusy] = useState(null);
+  // City dispatch line (number + note) edited by the shift
+  const [citySettings, setCitySettings] = useState({ dispatchPhone: null, dispatchPhoneNote: "" });
   const [view, setView] = useState(null);
   const [adminTab, setAdminTab] = useState("applications");
   const [assigning, setAssigning] = useState({});
@@ -33,6 +35,39 @@ const DispatcherPanel = ({ cityId, role, me }) => {
   const [audit, setAudit] = useState([]);
 
   const isRegionAdmin = role === "region_admin";
+
+  const loadCitySettings = async () => {
+    try {
+      const res = await apiGet(`/api/dispatch/${cityId}/settings`);
+      setCitySettings(res.data.settings);
+    } catch {
+      // The line is informational: its failure must not block the queue
+    }
+  };
+
+  const editDispatchPhone = async () => {
+    const answer = await ask({
+      title: "Диспетчерская линия города",
+      placeholder: "Телефон, например +7 902 111-22-33 · и подпись через ;",
+      initial: [citySettings.dispatchPhone ?? "", citySettings.dispatchPhoneNote ?? ""]
+        .filter(Boolean)
+        .join(";"),
+      okText: "Сохранить",
+    });
+    if (!answer) return;
+    const [phone, ...rest] = answer.split(";");
+    const note = rest.join(";").trim();
+    try {
+      const res = await apiPatch(`/api/dispatch/${cityId}/dispatch-phone`, {
+        phone: phone.trim() || null,
+        ...(note && { note }),
+      });
+      setCitySettings(res.data.settings);
+      dispatch(notificationActions.addNotification({ message: "Диспетчерская линия обновлена", type: "success" }));
+    } catch (err) {
+      setError(err.message);
+    }
+  };
 
   const loadSos = async () => {
     try {
@@ -82,6 +117,7 @@ const DispatcherPanel = ({ cityId, role, me }) => {
     // The list is the source of truth: a live payload only tells us to reload,
     // so a banner missed while the tab was hidden still appears.
     loadSos();
+    loadCitySettings();
     const onChanged = () => load();
     const onSos = () => loadSos();
     const onSosClosed = (payload) => {
@@ -353,6 +389,28 @@ const DispatcherPanel = ({ cityId, role, me }) => {
         </div>
       )}
       {error && <div className="text-danger text-sm">{error}</div>}
+
+      {/* Диспетчерская линия города: пассажир видит её и звонит откуда угодно */}
+      <div className="glass rounded-2xl p-3 space-y-1">
+        <div className="font-semibold">Диспетчерская линия города</div>
+        {citySettings.dispatchPhone && (
+          <a
+            className="text-cta-icon font-semibold underline text-[1.6rem]"
+            href={`tel:${String(citySettings.dispatchPhone).replace(/[^\d+]/g, "")}`}
+          >
+            <IconText>📞 {citySettings.dispatchPhone}</IconText>
+          </a>
+        )}
+        {citySettings.dispatchPhoneNote && (
+          <div className="text-xs text-secondary-text">{citySettings.dispatchPhoneNote}</div>
+        )}
+        {!citySettings.dispatchPhone && (
+          <div className="text-xs text-secondary-text">Номер не задан — пассажиры не смогут позвонить</div>
+        )}
+        <button className="underline text-sm" onClick={editDispatchPhone}>
+          {citySettings.dispatchPhone ? "Изменить номер" : "Добавить номер"}
+        </button>
+      </div>
 
       {/* Заявки на диспетчера и управление регионом — наверху, под SOS */}
       {isRegionAdmin && (

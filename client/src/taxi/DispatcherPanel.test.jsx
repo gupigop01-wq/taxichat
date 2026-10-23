@@ -38,6 +38,8 @@ const api = require("./api");
 const asked = [];
 const placed = [];
 
+let dispatchLine = { dispatchPhone: null, dispatchPhoneNote: "" };
+
 const signals = () => [
   {
     _id: "sos-1",
@@ -67,6 +69,7 @@ const answer = (url) => {
     error.status = 403;
     return Promise.reject(error);
   }
+  if (target.endsWith("/settings")) return Promise.resolve({ data: { settings: dispatchLine } });
   if (target.includes("/sos")) return Promise.resolve({ data: { signals: signals() } });
   if (target.includes("/api/orders")) return Promise.resolve({ data: { orders: [] } });
   return Promise.resolve({ data: { drivers: [] } });
@@ -150,4 +153,20 @@ test("closing a signal requires a note and sends the outcome", async () => {
       body: { outcome: "resolved", resolution: "Связались с пассажиром" },
     })
   );
+});
+
+test("the dispatch line card shows the city number as a call link", async () => {
+  dispatchLine = { dispatchPhone: "+79025556677", dispatchPhoneNote: "Круглосуточно" };
+  renderPanel();
+
+  const call = await screen.findByRole("link", { name: /\+79025556677/ });
+  expect(call).toHaveAttribute("href", "tel:+79025556677");
+  expect(screen.getByText("Круглосуточно")).toBeInTheDocument();
+});
+
+test("without a number the card invites the shift to add one", async () => {
+  renderPanel();
+
+  expect(await screen.findByText(/Номер не задан/)).toBeInTheDocument();
+  expect(screen.getByRole("button", { name: "Добавить номер" })).toBeInTheDocument();
 });

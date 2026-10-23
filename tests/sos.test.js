@@ -172,3 +172,36 @@ describe("contact phones in the order view", () => {
     expect(forPassenger.body.data.order.passenger?.phone).toBeUndefined();
   });
 });
+
+describe("city dispatch line", () => {
+  it("lets the city dispatcher set the public number and shows it to everyone", async () => {
+    const world = await setupPilotCity(app);
+    const saved = await request(app)
+      .patch(`/api/dispatch/${world.city._id}/dispatch-phone`)
+      .set("Cookie", world.dispatcher.cookie)
+      .send({ phone: "8 (902) 555-66-77", note: "Круглосуточно" });
+    expect(saved.status).toBe(200);
+    expect(saved.body.data.settings.dispatchPhone).toBe("+79025556677");
+    expect(saved.body.data.settings.dispatchPhoneNote).toBe("Круглосуточно");
+
+    const cities = await request(app).get("/api/geo/cities?query=Слюдянка");
+    const city = cities.body.data.cities.find((item) => String(item._id) === String(world.city._id));
+    expect(city.dispatchPhone).toBe("+79025556677");
+    expect(city.dispatchPhoneNote).toBe("Круглосуточно");
+  });
+
+  it("rejects a malformed number and outsiders", async () => {
+    const world = await setupPilotCity(app);
+    const bad = await request(app)
+      .patch(`/api/dispatch/${world.city._id}/dispatch-phone`)
+      .set("Cookie", world.dispatcher.cookie)
+      .send({ phone: "123" });
+    expect(bad.status).toBe(400);
+
+    const outsider = await request(app)
+      .patch(`/api/dispatch/${world.city._id}/dispatch-phone`)
+      .set("Cookie", world.passenger.cookie)
+      .send({ phone: "+79025556677" });
+    expect(outsider.status).toBe(403);
+  });
+});

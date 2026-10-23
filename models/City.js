@@ -27,6 +27,10 @@ const directCallLimitsSchema = new mongoose.Schema(
 const settingsSchema = new mongoose.Schema(
   {
     matchMode: { type: String, enum: MATCH_MODES, default: "offers" },
+    // City dispatch line: passengers call it from the app ("Позвонить
+    // диспетчеру"), so their personal number is never exposed either
+    dispatchPhone: { type: String, default: null },
+    dispatchPhoneNote: { type: String, maxlength: 80, default: "" },
     cascadeTimeouts: { type: cascadeTimeoutsSchema, default: () => ({}) },
     waitingMinutes: { type: Number, default: 10 },
     preorderLeadMinutes: { type: Number, default: 30 },

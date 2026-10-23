@@ -73,6 +73,7 @@ const TaxiApp = () => {
   useOrderNotices({ role, userId: user?._id });
 
   const city = cities.find((item) => String(item._id) === String(cityId));
+  const activeCity = city ?? {};
   const section = SECTIONS.find((item) => item.key === tab) ?? SECTIONS[0];
   const reduceMotion = useReducedMotion();
 
@@ -140,8 +141,19 @@ const TaxiApp = () => {
           </button>
         </div>
         <h2 className="taxi-heading font-display">{openTrip ? "Заказ" : section.label}</h2>
-        <div className="taxi-context-row">
-          <CityPicker cities={cities} cityId={cityId} onSelect={setCityId} />
+          <div className="taxi-context-row">
+            <CityPicker cities={cities} cityId={cityId} onSelect={setCityId} />
+            {activeCity?.dispatchPhone && role !== "dispatcher" && role !== "region_admin" && (
+              <a
+                className="taxi-role-trigger press"
+                href={`tel:${String(activeCity.dispatchPhone).replace(/[^\d+]/g, "")}`}
+                aria-label={`Позвонить диспетчеру: ${activeCity.dispatchPhone}`}
+                title={activeCity.dispatchPhoneNote || "Диспетчерская"}
+              >
+                <TaxiIcon name="phone" size={17} />
+                <span className="truncate">Диспетчерская</span>
+              </a>
+            )}
           {availableRoles.length > 1 ? (
             <div className="taxi-role-anchor">
               <button className="taxi-role-trigger press" onClick={() => setRolePickerOpen((value) => !value)}

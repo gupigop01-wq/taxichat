@@ -15,6 +15,9 @@ const cityView = (city) => ({
   tz: city.tz,
   status: city.status,
   region: city.regionId ? { _id: city.regionId._id, name: city.regionId.name } : null,
+  // Public dispatch line of the city: shown on the passenger screen
+  dispatchPhone: city.settings?.dispatchPhone ?? null,
+  dispatchPhoneNote: city.settings?.dispatchPhoneNote ?? "",
 });
 
 // GET /api/geo/regions
