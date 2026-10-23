@@ -14,7 +14,7 @@ const catchAsyncError = require("../utilities/catchAsyncError");
 const { validateBody } = require("../utilities/catchAsyncError");
 const { logAudit } = require("../utilities/audit");
 const botDispatcher = require("../services/botDispatcher");
-const { regionAdminCityIds } = require("../utilities/rbac");
+const { regionAdminCityIds, loadMemberships } = require("../utilities/rbac");
 
 // Prefer the order/home city; membership fallback must be unambiguous.
 const complaintCityId = async (order, reporter) => {
@@ -227,6 +227,9 @@ exports.raiseSos = catchAsyncError(async (req, res) => {
     cityId: order.cityId,
     type: "sos",
     text: req.body?.text ?? "Кнопка SOS нажата во время заказа",
+    // Snapshot of the reporter's number so the dispatcher can call back even
+    // if the account changes later
+    ...(req.user.phone && { phone: req.user.phone }),
   });
 
   await botDispatcher.postSystemMessage(
@@ -244,9 +247,25 @@ exports.raiseSos = catchAsyncError(async (req, res) => {
     dispatchers.map((dispatcher) => ({
       room: `user:${dispatcher.userId}`,
       event: "sos:raised",
-      payload: { orderId: order._id, complaintId: complaint._id },
+      payload: {
+        orderId: order._id,
+        complaintId: complaint._id,
+        text: complaint.text,
+        reporterName: req.user.name,
+        reporterRole: String(order.passengerId) === String(req.user._id) ? "passenger" : "driver",
+        status: complaint.status,
+        createdAt: complaint.createdAt,
+      },
     }))
   );
+  // The dispatcher may have the app closed: the push wakes the phone
+  void pushService
+    .notifyCitySos(order.cityId, {
+      complaintId: complaint._id,
+      from: order.from?.text,
+      reporterName: req.user.name,
+    })
+    .catch(() => undefined);
 
   await logAudit({
     actorId: req.user._id,
@@ -322,5 +341,182 @@ exports.reviewComplaint = catchAsyncError(async (req, res) => {
 
   res.json({ status: "success", data: { complaint } });
 });
+
+// ---- SOS center for the city dispatcher -------------------------------------
+// A dispatcher (or the region admin of that city, or superadmin) may work an
+// SOS of his city. The scope check mirrors the order-management rule.
+const canWorkCitySos = async (req, cityId) => {
+  if (req.user?.isSuperadmin) return true;
+  const ownCity = (req.memberships ?? []).some(
+    (item) =>
+      item.role === "dispatcher" &&
+      item.status === "ACTIVE" &&
+      String(item.cityId?._id ?? item.cityId) === String(cityId)
+  );
+  if (ownCity) return true;
+  return (await regionAdminCityIds(req))?.includes(String(cityId)) === true;
+};
+
+const sosView = (complaint) => ({
+  _id: complaint._id,
+  orderId: complaint.orderId,
+  cityId: complaint.cityId,
+  status: complaint.status,
+  text: complaint.text,
+  phone: complaint.phone ?? null,
+  reporter: complaint.reporterId
+    ? { _id: complaint.reporterId._id ?? complaint.reporterId, name: complaint.reporterId.name ?? null }
+    : null,
+  takenBy: complaint.takenBy
+    ? { _id: complaint.takenBy._id ?? complaint.takenBy, name: complaint.takenBy.name ?? null }
+    : null,
+  takenAt: complaint.takenAt ?? null,
+  resolution: complaint.resolution ?? null,
+  createdAt: complaint.createdAt,
+});
+
+const loadSosForDispatcher = async (req) => {
+  const complaint = await Complaint.findOne({ _id: req.params.id, type: "sos" });
+  if (!complaint) throw new ApiError(404, "Сигнал не найден");
+  if (!(await canWorkCitySos(req, complaint.cityId)))
+    throw new ApiError(403, "Недостаточно прав в этом городе");
+  return complaint;
+};
+
+// GET /api/dispatch/:cityId/sos — open and in-review signals of the city
+exports.listCitySos = [
+  loadMemberships,
+  catchAsyncError(async (req, res) => {
+    if (!(await canWorkCitySos(req, req.params.cityId)))
+      throw new ApiError(403, "Недостаточно прав в этом городе");
+
+    const complaints = await Complaint.find({
+      cityId: req.params.cityId,
+      type: "sos",
+      status: { $in: ["OPEN", "IN_REVIEW"] },
+    })
+      .populate("reporterId", "name")
+      .populate("takenBy", "name")
+      .sort({ createdAt: -1 })
+      .limit(50);
+
+    res.json({ status: "success", data: { signals: complaints.map(sosView) } });
+  }),
+];
+
+// POST /api/dispatch/sos/:id/take — the dispatcher answers the signal
+
+// POST /api/dispatch/sos/:id/take — the dispatcher answers the signal
+exports.takeCitySos = [
+  loadMemberships,
+  catchAsyncError(async (req, res) => {
+    const complaint = await loadSosForDispatcher(req);
+    if (!["OPEN", "IN_REVIEW"].includes(complaint.status))
+      throw new ApiError(409, "Сигнал уже обработан");
+
+    // Two dispatchers answering at once must not overwrite the first handler
+    if (!complaint.takenBy) {
+      complaint.takenBy = req.user._id;
+      complaint.takenAt = new Date();
+      complaint.status = "IN_REVIEW";
+      await complaint.save();
+
+      await logAudit({
+        actorId: req.user._id,
+        action: "sos.taken",
+        targetType: "Complaint",
+        targetId: complaint._id,
+        payload: { orderId: complaint.orderId },
+      });
+    }
+
+    await complaint.populate("reporterId", "name");
+    await complaint.populate("takenBy", "name");
+
+    // Let the whole shift see who is handling the signal
+    const staff = await Membership.find({
+      cityId: complaint.cityId,
+      role: "dispatcher",
+      status: "ACTIVE",
+    }).select("userId");
+    emitOrderEvents(
+      staff.map((member) => ({
+        room: `user:${member.userId}`,
+        event: "sos:taken",
+        payload: { complaintId: complaint._id, takenBy: { name: req.user.name } },
+      }))
+    );
+
+    res.json({ status: "success", data: { signal: sosView(complaint) } });
+  }),
+];
+
+const closeSosSchema = z.object({
+  outcome: z.enum(["resolved", "dismissed"], {
+    errorMap: () => ({ message: "Исход: resolved или dismissed" }),
+  }),
+  resolution: z.string().trim().min(3, "Опишите, что сделано").max(300),
+});
+exports.closeSosSchema = closeSosSchema;
+
+// PATCH /api/dispatch/sos/:id — close with a mandatory note
+exports.closeCitySos = [
+  loadMemberships,
+  validateBody(closeSosSchema),
+  catchAsyncError(async (req, res) => {
+    const complaint = await loadSosForDispatcher(req);
+    if (!["OPEN", "IN_REVIEW"].includes(complaint.status))
+      throw new ApiError(409, "Сигнал уже обработан");
+
+    complaint.status = req.body.outcome === "resolved" ? "RESOLVED" : "DISMISSED";
+    complaint.resolution = req.body.resolution;
+    complaint.resolvedBy = req.user._id;
+    if (!complaint.takenBy) {
+      complaint.takenBy = req.user._id;
+      complaint.takenAt = new Date();
+    }
+    await complaint.save();
+
+    await logAudit({
+      actorId: req.user._id,
+      action: "sos.closed",
+      targetType: "Complaint",
+      targetId: complaint._id,
+      payload: { status: complaint.status, resolution: complaint.resolution },
+    });
+
+    // Participants of the order learn that help is on the way / the signal
+    // is closed, so nobody keeps waiting in silence
+    const order = await Order.findById(complaint.orderId).select("chatId");
+    if (order?.chatId) {
+      await botDispatcher.postSystemMessage(
+        order.chatId,
+        complaint.status === "RESOLVED"
+          ? `Диспетчерская: сигнал SOS обработан — ${complaint.resolution}`
+          : `Диспетчерская: сигнал SOS закрыт — ${complaint.resolution}`
+      );
+    }
+
+    // Other dispatchers drop the banner at once instead of on the next reload
+    const staff = await Membership.find({
+      cityId: complaint.cityId,
+      role: "dispatcher",
+      status: "ACTIVE",
+    }).select("userId");
+    emitOrderEvents(
+      staff.map((member) => ({
+        room: `user:${member.userId}`,
+        event: "sos:closed",
+        payload: { complaintId: complaint._id, orderId: complaint.orderId },
+      }))
+    );
+
+    await complaint.populate("reporterId", "name");
+    await complaint.populate("takenBy", "name");
+    res.json({ status: "success", data: { signal: sosView(complaint) } });
+  }),
+];
+
+
 
 

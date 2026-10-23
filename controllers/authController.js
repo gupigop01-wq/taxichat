@@ -6,6 +6,7 @@ const { sendAuthCookie, clearAuthCookie } = require("../utilities/auth");
 const City = require("../models/City");
 const Membership = require("../models/Membership");
 const { recalcCityStatus } = require("../utilities/cityStatus");
+const { normalizePhone } = require("../utilities/phone");
 
 const registerSchema = z
   .object({
@@ -24,6 +25,8 @@ const registerSchema = z
     newCityName: z.string().trim().min(1, "Укажите город").max(60).optional(),
     bio: z.string().max(100).optional(),
     avatar: z.string().optional(),
+    // Contact phone: any readable format, stored as +7XXXXXXXXXX
+    phone: z.string().trim().max(30).optional(),
   })
   .refine((data) => data.password === data.confirmPassword, {
     message: "Пароли не совпадают",
@@ -47,16 +50,21 @@ exports.registerSchema = registerSchema;
 exports.loginSchema = loginSchema;
 
 exports.register = catchAsyncError(async (req, res) => {
-  const { name, username, password, bio, avatar, cityId, newCityName } = req.body;
+  const { name, username, password, bio, avatar, cityId, newCityName, phone } = req.body;
 
   const existing = await User.findOne({ username });
   if (existing) throw new ApiError(409, "Логин уже занят");
+
+  const normalizedPhone = phone ? normalizePhone(phone) : null;
+  if (phone && !normalizedPhone)
+    throw new ApiError(400, "Телефон укажите в формате +7 902 111-22-33");
 
   const newUser = await User.create({
     name,
     username,
     password,
     confirmPassword: req.body.confirmPassword,
+    ...(normalizedPhone && { phone: normalizedPhone }),
     ...(bio !== undefined && { bio }),
     ...(avatar !== undefined && { avatar }),
   });

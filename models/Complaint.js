@@ -17,6 +17,13 @@ const complaintSchema = new mongoose.Schema(
     text: { type: String, required: true, maxlength: 1000 },
     resolution: String,
     resolvedBy: { type: mongoose.Schema.Types.ObjectId, ref: "User" },
+    // SOS is handled by the city dispatcher on the spot: OPEN -> IN_REVIEW
+    // (someone took it) -> RESOLVED/DISMISSED. `takenBy` drives "taken by
+    // whom" in the dispatcher banner.
+    takenBy: { type: mongoose.Schema.Types.ObjectId, ref: "User" },
+    takenAt: Date,
+    // Normalised at creation so the order view can offer a direct call
+    phone: String,
   },
   { timestamps: true }
 );

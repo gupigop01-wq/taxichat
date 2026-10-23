@@ -16,6 +16,9 @@ const Schema = new mongoose.Schema({
     type: String,
     required: true,
   },
+  // Contact phone in E.164 (+7XXXXXXXXXX). Neither drivers nor passengers see
+  // each other's number in chat; a dispatcher uses it to call on SOS.
+  phone: { type: String, default: null },
   // Display name
   name: {
     type: String,

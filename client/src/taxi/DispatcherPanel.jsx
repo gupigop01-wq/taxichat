@@ -10,6 +10,8 @@ import { IconText } from "./TaxiIcon";
 
 // Dispatcher panel: city order queue, manual assignment, driver applications
 // review and the region admin sections (concept 1.3 / 1.9)
+const callLink = (phone) => `tel:${String(phone).replace(/[^\d+]/g, "")}`;
+
 const DispatcherPanel = ({ cityId, role, me }) => {
   const { ask, confirm } = useDialog();
   const dispatch = useDispatch();
@@ -18,7 +20,10 @@ const DispatcherPanel = ({ cityId, role, me }) => {
   const [pending, setPending] = useState([]);
   const [activeDrivers, setActiveDrivers] = useState([]);
   const [error, setError] = useState(null);
+  // SOS center: one banner with the newest signal on top; every signal keeps
+  // its own status so two dispatchers never overwrite each other
   const [sos, setSos] = useState([]);
+  const [sosBusy, setSosBusy] = useState(null);
   const [view, setView] = useState(null);
   const [adminTab, setAdminTab] = useState("applications");
   const [assigning, setAssigning] = useState({});
@@ -29,6 +34,14 @@ const DispatcherPanel = ({ cityId, role, me }) => {
 
   const isRegionAdmin = role === "region_admin";
 
+  const loadSos = async () => {
+    try {
+      const res = await apiGet(`/api/dispatch/${cityId}/sos`);
+      setSos(res.data.signals);
+    } catch (err) {
+      // SOS must never hide the queue: a failure here is not a panel error
+    }
+  };
   const load = async () => {
     try {
       const [ordersRes, pendingRes, driversRes] = await Promise.all([
@@ -66,18 +79,30 @@ const DispatcherPanel = ({ cityId, role, me }) => {
 
   useEffect(() => {
     load();
+    // The list is the source of truth: a live payload only tells us to reload,
+    // so a banner missed while the tab was hidden still appears.
+    loadSos();
     const onChanged = () => load();
-    const onSos = (payload) => {
-      setSos((current) => current.some((item) => String(item.orderId) === String(payload.orderId))
-        ? current : [payload, ...current]);
+    const onSos = () => loadSos();
+    const onSosClosed = (payload) => {
+      setSos((current) => current.filter((item) => String(item._id) !== String(payload.complaintId)));
     };
+    const onSosTaken = () => loadSos();
     socketListen("order:new", onChanged);
     socketListen("order:status", onChanged);
     socketListen("sos:raised", onSos);
+    socketListen("sos:closed", onSosClosed);
+    socketListen("sos:taken", onSosTaken);
+    // A phone that slept reconnects with an empty state: refresh the signals
+    const onConnect = () => loadSos();
+    socket.on("connect", onConnect);
     return () => {
       socket.off("order:new", onChanged);
       socket.off("order:status", onChanged);
       socket.off("sos:raised", onSos);
+      socket.off("sos:closed", onSosClosed);
+      socket.off("sos:taken", onSosTaken);
+      socket.off("connect", onConnect);
     };
   }, [cityId]);
 
@@ -90,6 +115,40 @@ const DispatcherPanel = ({ cityId, role, me }) => {
   if (view) {
     return <OrderChat orderId={view} me={me} onBack={() => setView(null)} startCall={() => {}} />;
   }
+
+  const takeSos = async (signal) => {
+    try {
+      setSosBusy(signal._id);
+      const res = await apiPost(`/api/dispatch/sos/${signal._id}/take`);
+      setSos((current) => current.map((item) => (item._id === signal._id ? res.data.signal : item)));
+    } catch (err) {
+      setError(err.message);
+      loadSos();
+    } finally {
+      setSosBusy(null);
+    }
+  };
+
+  const closeSos = async (signal, outcome) => {
+    const resolution = await ask({
+      title: outcome === "resolved" ? "Сигнал обработан" : "Закрыть как ложный",
+      placeholder: "Что сделано (увидит админ региона)",
+      okText: "Закрыть",
+      danger: outcome !== "resolved",
+    });
+    if (!resolution || resolution.trim().length < 3) return;
+    try {
+      setSosBusy(signal._id);
+      await apiPatch(`/api/dispatch/sos/${signal._id}`, { outcome, resolution: resolution.trim() });
+      setSos((current) => current.filter((item) => item._id !== signal._id));
+      dispatch(notificationActions.addNotification({ message: "Сигнал SOS закрыт", type: "success" }));
+    } catch (err) {
+      setError(err.message);
+      loadSos();
+    } finally {
+      setSosBusy(null);
+    }
+  };
 
   const assign = async (orderId, membershipId) => {
     const order = orders.find((item) => item._id === orderId);
@@ -221,15 +280,76 @@ const DispatcherPanel = ({ cityId, role, me }) => {
   return (
     <div className="p-4 space-y-4 overflow-y-auto h-full max-w-[42rem] mx-auto w-full">
       {sos.length > 0 && (
-        <div className="bg-danger text-white rounded-2xl p-4 space-y-2" role="alert">
-          <h3 className="font-display font-bold">SOS · {sos.length}</h3>
-          {sos.map((item) => (
-            <div key={item.orderId} className="flex items-center gap-3 flex-wrap justify-between">
-              <span>Сигнал по заказу {orders.find((order) => String(order._id) === String(item.orderId))?.from?.text ?? String(item.orderId)}</span>
-              <button className="bg-white text-danger px-3 py-2 rounded-xl font-semibold" onClick={() => setView(item.orderId)}>Открыть чат</button>
-            </div>
-          ))}
-          <p className="text-xs">Сигналы остаются до обновления страницы. Статус жалоб проверяйте во вкладке администратора.</p>
+        <div className="bg-danger text-white rounded-2xl p-4 space-y-3" role="alert" aria-live="assertive">
+          <div className="flex items-center justify-between gap-2">
+            <h3 className="font-display font-bold">
+              <IconText>🚨 SOS · {sos.length}</IconText>
+            </h3>
+            <span className="text-xs opacity-90">
+              {sos.some((item) => !item.takenBy) ? "никто не взял" : "в работе"}
+            </span>
+          </div>
+          {sos.map((item) => {
+            const order = orders.find((candidate) => String(candidate._id) === String(item.orderId));
+            const driverPhone = order?.driver?.phone;
+            const busy = sosBusy === item._id;
+            return (
+              <div key={item._id} className="bg-white/10 rounded-xl p-3 space-y-2">
+                <div className="font-semibold">
+                  {item.reporter?.name ?? "Пассажир"} · {order?.from?.text ?? "заказ"}
+                </div>
+                <div className="text-sm opacity-90 break-words">{item.text}</div>
+                {item.takenBy && (
+                  <div className="text-xs">
+                    В работе: {item.takenBy.name}
+                    {item.status === "IN_REVIEW" ? "" : " (взят ранее)"}
+                  </div>
+                )}
+                <div className="flex flex-wrap gap-2">
+                  {item.phone && (
+                    <a href={callLink(item.phone)} className="bg-white text-danger px-3 py-2 rounded-xl font-semibold">
+                      <IconText>📞 Позвонить пассажиру</IconText>
+                    </a>
+                  )}
+                  {driverPhone && (
+                    <a href={callLink(driverPhone)} className="bg-white text-danger px-3 py-2 rounded-xl font-semibold">
+                      <IconText>📞 Позвонить водителю</IconText>
+                    </a>
+                  )}
+                  <button className="bg-black/30 px-3 py-2 rounded-xl font-semibold" onClick={() => setView(item.orderId)}>
+                    Открыть чат
+                  </button>
+                  {!item.takenBy && (
+                    <button
+                      className="bg-white text-danger px-3 py-2 rounded-xl font-semibold disabled:opacity-60"
+                      disabled={busy}
+                      onClick={() => takeSos(item)}
+                    >
+                      {busy ? "Берём…" : "Взять в работу"}
+                    </button>
+                  )}
+                  <button
+                    className="bg-white text-danger px-3 py-2 rounded-xl font-semibold disabled:opacity-60"
+                    disabled={busy}
+                    onClick={() => closeSos(item, "resolved")}
+                  >
+                    Обработан
+                  </button>
+                  <button
+                    className="px-3 py-2 rounded-xl font-semibold underline disabled:opacity-60"
+                    disabled={busy}
+                    onClick={() => closeSos(item, "dismissed")}
+                  >
+                    Ложный
+                  </button>
+                </div>
+                {!item.phone && (
+                  <p className="text-xs opacity-80">У пассажира нет телефона — свяжитесь через чат или позвоните водителю.</p>
+                )}
+              </div>
+            );
+          })}
+          <p className="text-xs opacity-90">Закрытые сигналы остаются в журнале у админа региона.</p>
         </div>
       )}
       {error && <div className="text-danger text-sm">{error}</div>}

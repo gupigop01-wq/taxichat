@@ -14,6 +14,7 @@ const ApiError = require("../utilities/errors");
 const catchAsyncError = require("../utilities/catchAsyncError");
 const { validateBody } = require("../utilities/catchAsyncError");
 const { regionAdminCityIds } = require("../utilities/rbac");
+const { normalizePhone } = require("../utilities/phone");
 const { transition, assignAtomically } = require("../services/orderService");
 const {
   toPassengerView,
@@ -40,6 +41,9 @@ const createOrderSchema = z
     matchMode: z.enum(["offers", "first_take", "dispatcher"]).optional(),
     targetDriverId: z.string().optional(),
     chatId: z.string().optional(),
+    // Contact phone for this order; saved to the account so the dispatcher can
+    // call the passenger on SOS even when the app is closed
+    phone: z.string().trim().max(30).optional(),
   })
   .superRefine((data, ctx) => {
     if (data.whenType === "scheduled" && !data.whenAt)
@@ -198,6 +202,18 @@ exports.createOrder = [
       }
 
       directContext = { targetMembership, targetProfile };
+    }
+
+    // Contact phone: save it to the account so the dispatcher can call the
+    // passenger on SOS even when the app was closed since
+    if (data.phone) {
+      const normalizedPhone = normalizePhone(data.phone);
+      if (!normalizedPhone)
+        throw new ApiError(400, "Телефон укажите в формате +7 902 111-22-33");
+      if (req.user.phone !== normalizedPhone) {
+        req.user.phone = normalizedPhone;
+        await User.findByIdAndUpdate(req.user._id, { phone: normalizedPhone });
+      }
     }
 
     let order = await Order.create({

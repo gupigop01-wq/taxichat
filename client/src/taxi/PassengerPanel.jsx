@@ -30,6 +30,9 @@ const PassengerPanel = ({ me, cityId, cityName, cityNames, refreshMe, startCall 
   // Композер заказа: маршрут одной строкой, сейчас или на время
   const [route, setRoute] = useState("");
   const [notes, setNotes] = useState("");
+  // Contact phone: prefilled from the account; the dispatcher calls it on SOS.
+  // Never shown to the driver.
+  const [phone, setPhone] = useState(me?.user?.phone ?? "");
   const [whenType, setWhenType] = useState("now");
   const [whenAt, setWhenAt] = useState(defaultScheduledAt());
   const [timeOpen, setTimeOpen] = useState(false);
@@ -100,6 +103,7 @@ const PassengerPanel = ({ me, cityId, cityName, cityNames, refreshMe, startCall 
         cityId,
         route: route.trim(),
         ...(notes.trim() && { notes: notes.trim() }),
+        ...(phone.trim() && { phone: phone.trim() }),
         ...(whenType === "scheduled" && {
           whenType: "scheduled",
           whenAt: new Date(whenAt).toISOString(),
@@ -428,6 +432,19 @@ const PassengerPanel = ({ me, cityId, cityName, cityNames, refreshMe, startCall 
             cityName={cityName}
             cities={cityNames}
             listId="route-suggestions"
+          />
+
+          {/* Номер для связи: нужен диспетчеру на случай SOS; водителю не показывается */}
+          <label className="sr-only" htmlFor="taxi-order-phone">Телефон для связи</label>
+          <input
+            id="taxi-order-phone"
+            type="tel"
+            inputMode="tel"
+            autoComplete="tel"
+            className="w-full bg-[#0d0d0d] text-white placeholder:text-secondary-text border border-secondary-text/30 rounded-2xl px-3 py-2.5 focus:border-accent focus:outline-none transition-colors text-[1.5rem] text-primary-text"
+            placeholder="Телефон для связи с диспетчером"
+            value={phone}
+            onChange={(event) => setPhone(event.target.value)}
           />
 
           {/* Комментарий + кнопка заказа — одна строка в стиле мессенджера:

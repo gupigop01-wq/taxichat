@@ -60,6 +60,7 @@ function Register({ setUserWantsToLogin }) {
         initialValues={{
           name: "",
           username: "",
+          phone: "",
           password: "",
           confirmPassword: "",
           cityId: "",
@@ -71,6 +72,7 @@ function Register({ setUserWantsToLogin }) {
           const payload = {
             name: values.name,
             username: values.username,
+            ...(values.phone ? { phone: values.phone } : {}),
             password: values.password,
             confirmPassword: values.confirmPassword,
             ...(cityMode === "pick" && values.cityId
@@ -107,6 +109,17 @@ function Register({ setUserWantsToLogin }) {
               required={true}
               value={values.username}
               error={errors.username}
+            />
+
+            <FormField
+              center={true}
+              persistentLabel
+              labelName="Телефон"
+              labelClassName="bg-[#171717]"
+              name="phone"
+              type="tel"
+              value={values.phone}
+              error={errors.phone}
             />
 
             <FormField

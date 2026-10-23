@@ -79,6 +79,25 @@ const sendPushToCityRole = async (cityId, role, payload, { excludeUserId } = {})
   return { sent: results.filter((result) => result.value?.sent > 0).length };
 };
 
+// SOS reached the city dispatchers: it must interrupt, so it is its own
+// high-priority card and stays on screen until handled.
+const notifyCitySos = async (cityId, { complaintId, from, reporterName } = {}) => {
+  if (!configure()) return { sent: 0, skipped: "push-not-configured" };
+  const payload = {
+    kind: "sos",
+    title: "SOS · сигнал пассажира",
+    body: [reporterName, from].filter(Boolean).join(" · ") || "Открыт заказ",
+    speakText: "SOS. Сигнал пассажира",
+    tag: "bombila-sos",
+    renotify: true,
+    url: "/?sos=1",
+    complaintId: String(complaintId ?? ""),
+    requireInteraction: true,
+    actions: [{ action: "open", title: "Открыть" }],
+  };
+  return sendPushToCityStaff(cityId, payload);
+};
+
 const STATUS_TEXTS = {
   ASSIGNED: "Водитель назначен",
   ARRIVING: "Водитель выехал к вам",
@@ -198,6 +217,7 @@ module.exports = {
   notifyNewOffer,
   notifyNewOrder,
   notifyOrderRated,
+  notifyCitySos,
   // test-only: forget the cached "configured" state between scenarios
   __resetConfiguredForTests: () => {
     configured = false;
