@@ -11,6 +11,8 @@ const DriverProfile = require("../models/DriverProfile");
 const Order = require("../models/Order");
 const pushService = require("../utilities/pushService");
 const { emitOrderEvents } = require("../utilities/sockets");
+const { dayRange } = require("../utilities/cityDay");
+const ShiftHandover = require("../models/ShiftHandover");
 
 // City settings are split by who owns the decision:
 //  - city line and waiting time are operational: the city dispatchers keep
@@ -217,5 +219,133 @@ exports.forceDriverOffline = [
       status: "success",
       data: { membershipId: membership._id, shift: "offline", activeOrderId: activeOrder?._id ?? null },
     });
+  }),
+];
+
+// ---- Shift summary for the city dispatch -----------------------------------
+// A "shift" is the calendar day of the city in its own timezone: the numbers
+// stay stable from midnight to midnight and match what the manager reviews.
+const shiftSummary = async (cityId) => {
+  const city = await City.findById(cityId).select("tz name");
+  if (!city) throw new ApiError(404, "Город не найден");
+  const { start, end } = dayRange(city.tz);
+  const cityObjectId = new (require("mongoose").Types.ObjectId)(String(cityId));
+  const range = { cityId: cityObjectId, createdAt: { $gte: start, $lt: end } };
+
+  const [byStatus, activeDrivers, busyDrivers] = await Promise.all([
+    Order.aggregate([{ $match: range }, { $group: { _id: "$status", count: { $sum: 1 } } }]),
+    DriverProfile.countDocuments({ shift: { $in: ["online", "busy"] } }),
+    Order.distinct("driverId", {
+      cityId: cityObjectId,
+      status: { $in: ["ASSIGNED", "ARRIVING", "WAITING", "IN_RIDE"] },
+    }),
+  ]);
+  const counts = Object.fromEntries(byStatus.map((row) => [row._id, row.count]));
+  const ordersToday = byStatus.reduce((sum, row) => sum + row.count, 0);
+
+  const driversWhoWorked = await Order.distinct("driverId", {
+    ...range,
+    driverId: { $ne: null },
+  });
+
+  // Drivers on the line without a single order today: a reason to talk
+  const memberships = await Membership.find({ cityId, role: "driver", status: "ACTIVE" }).select(
+    "userId"
+  );
+  const profiles = await DriverProfile.find({ membershipId: { $in: memberships.map((m) => m._id) } }).select(
+    "membershipId displayName"
+  );
+  const nameByMembership = new Map(profiles.map((p) => [String(p.membershipId), p.displayName]));
+  const idleDrivers = memberships
+    .filter((membership) => String(membership.userId) !== "undefined")
+    .filter((membership) => !driversWhoWorked.some((id) => String(id) === String(membership.userId)))
+    .map((membership) => ({ userId: membership.userId, displayName: nameByMembership.get(String(membership._id)) ?? null }));
+
+  const lastHandover = await ShiftHandover.findOne({ cityId }).sort({ createdAt: -1 }).populate(
+    "authorId",
+    "name"
+  );
+
+  return {
+    day: start,
+    dayEnd: end,
+    tz: city.tz,
+    orders: {
+      total: ordersToday,
+      completed: counts.COMPLETED ?? 0,
+      cancelled: counts.CANCELLED ?? 0,
+      noShow: counts.NO_SHOW ?? 0,
+      expired: counts.EXPIRED ?? 0,
+      open: (counts.PUBLISHED ?? 0) + (counts.DISPUTE ?? 0) + (counts.BOOKED ?? 0),
+    },
+    drivers: {
+      onLine: activeDrivers,
+      busy: busyDrivers.length,
+      worked: driversWhoWorked.length,
+      idle: idleDrivers.length,
+    },
+    idleDrivers,
+    lastHandover: lastHandover
+      ? {
+          note: lastHandover.note,
+          author: lastHandover.authorId?.name ?? null,
+          at: lastHandover.createdAt,
+        }
+      : null,
+  };
+};
+
+// GET /api/dispatch/:cityId/shift — today's numbers and the last handover
+exports.getShiftSummary = [
+  loadMemberships,
+  catchAsyncError(async (req, res) => {
+    if (!(await canEditCityOps(req, req.params.cityId)))
+      throw new ApiError(403, "Недостаточно прав в этом городе");
+    res.json({ status: "success", data: { shift: await shiftSummary(req.params.cityId) } });
+  }),
+];
+
+const handoverSchema = z.object({
+  note: z.string().trim().min(3, "Опишите передачу смены").max(1000),
+});
+exports.handoverSchema = handoverSchema;
+
+// POST /api/dispatch/:cityId/shift/handover — leave a note for the next shift
+exports.handoverShift = [
+  loadMemberships,
+  validateBody(handoverSchema),
+  catchAsyncError(async (req, res) => {
+    const cityId = req.params.cityId;
+    if (!(await canEditCityOps(req, cityId)))
+      throw new ApiError(403, "Недостаточно прав в этом городе");
+    const before = await shiftSummary(cityId);
+    const handover = await ShiftHandover.create({
+      cityId,
+      authorId: req.user._id,
+      day: before.day,
+      note: req.body.note,
+      stats: { orders: before.orders, drivers: before.drivers },
+    });
+
+    // The next shift sees the note in the panel; the journal keeps it too
+    const staff = await Membership.find({ cityId, role: "dispatcher", status: "ACTIVE" }).select(
+      "userId"
+    );
+    emitOrderEvents(
+      staff.map((member) => ({
+        room: `user:${member.userId}`,
+        event: "shift:handover",
+        payload: { note: handover.note, at: handover.createdAt },
+      }))
+    );
+    await logAudit({
+      actorId: req.user._id,
+      action: "dispatch.shiftHandover",
+      targetType: "City",
+      targetId: cityId,
+      payload: { note: handover.note },
+    });
+
+    res.status(201).json({ status: "success", data: { handover: { note: handover.note, at: handover.createdAt } } });
   }),
 ];

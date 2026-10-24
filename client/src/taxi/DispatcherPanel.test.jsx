@@ -39,6 +39,7 @@ const asked = [];
 const placed = [];
 
 let dispatchLine = { dispatchPhone: null, dispatchPhoneNote: "" };
+let shiftSummary = null;
 
 const signals = () => [
   {
@@ -70,6 +71,7 @@ const answer = (url) => {
     return Promise.reject(error);
   }
   if (target.endsWith("/settings")) return Promise.resolve({ data: { settings: dispatchLine } });
+  if (target.endsWith("/shift")) return Promise.resolve({ data: { shift: shiftSummary } });
   if (target.includes("/sos")) return Promise.resolve({ data: { signals: signals() } });
   if (target.includes("/api/orders")) return Promise.resolve({ data: { orders: [] } });
   return Promise.resolve({ data: { drivers: [] } });
@@ -169,4 +171,19 @@ test("without a number the card invites the shift to add one", async () => {
 
   expect(await screen.findByText(/Номер не задан/)).toBeInTheDocument();
   expect(screen.getByRole("button", { name: "Добавить номер" })).toBeInTheDocument();
+});
+
+test("the shift card shows today's numbers and the last handover note", async () => {
+  shiftSummary = {
+    orders: { total: 12, completed: 9, cancelled: 2, noShow: 1, expired: 0, open: 0 },
+    drivers: { onLine: 3, busy: 1, worked: 4, idle: 1 },
+    idleDrivers: [{ userId: "d3", displayName: "Водитель 3" }],
+    lastHandover: { note: "Проверить спор по заказу", author: "Ольга", at: "2026-10-23T12:00:00Z" },
+  };
+  renderPanel();
+
+  expect(await screen.findByText("Смена · сегодня")).toBeInTheDocument();
+  expect(screen.getByText("Проверить спор по заказу")).toBeInTheDocument();
+  expect(screen.getByText(/Передача от Ольга/)).toBeInTheDocument();
+  expect(screen.getByText(/Без заказов сегодня: Водитель 3/)).toBeInTheDocument();
 });

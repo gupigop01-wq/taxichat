@@ -34,6 +34,8 @@ const DispatcherPanel = ({ cityId, role, me }) => {
     cascadeTimeouts: { favorites: 20, zone: 60, neighbors: 120, city: 300, expire: 600 },
   });
   const [offlineBusy, setOfflineBusy] = useState(null);
+  // Today's shift numbers and the last handover note
+  const [shift, setShift] = useState(null);
   const [view, setView] = useState(null);
   const [adminTab, setAdminTab] = useState("applications");
   const [assigning, setAssigning] = useState({});
@@ -137,6 +139,31 @@ const DispatcherPanel = ({ cityId, role, me }) => {
     }
   };
 
+  const loadShift = async () => {
+    try {
+      const res = await apiGet(`/api/dispatch/${cityId}/shift`);
+      setShift(res.data.shift);
+    } catch {
+      // Summary is informational
+    }
+  };
+
+  const handover = async () => {
+    const note = await ask({
+      title: "Передача смены",
+      placeholder: "Что важно знать следующему диспетчеру",
+      okText: "Передать смену",
+    });
+    if (!note || note.trim().length < 3) return;
+    try {
+      await apiPost(`/api/dispatch/${cityId}/shift/handover`, { note: note.trim() });
+      dispatch(notificationActions.addNotification({ message: "Смена передана", type: "success" }));
+      loadShift();
+    } catch (err) {
+      setError(err.message);
+    }
+  };
+
   const loadSos = async () => {
     try {
       const res = await apiGet(`/api/dispatch/${cityId}/sos`);
@@ -186,6 +213,7 @@ const DispatcherPanel = ({ cityId, role, me }) => {
     // so a banner missed while the tab was hidden still appears.
     loadSos();
     loadCitySettings();
+    loadShift();
     const onChanged = () => load();
     const onSos = () => loadSos();
     const onSosClosed = (payload) => {
@@ -666,6 +694,51 @@ const DispatcherPanel = ({ cityId, role, me }) => {
           Изменить таймеры
         </button>
       </div>
+
+      {/* Смена: сводка за календарный день города и передача дел */}
+      {shift && (
+        <div className="glass rounded-2xl p-3 space-y-2">
+          <div className="flex items-center justify-between gap-2">
+            <div className="font-semibold">Смена · сегодня</div>
+            <button className="underline text-sm" onClick={handover}>
+              Сменить диспетчера
+            </button>
+          </div>
+          <div className="grid grid-cols-3 gap-2 text-center text-sm">
+            <div>
+              <div className="text-[1.8rem] font-bold">{shift.orders.total}</div>
+              <div className="text-secondary-text">заказов</div>
+            </div>
+            <div>
+              <div className="text-[1.8rem] font-bold text-success">{shift.orders.completed}</div>
+              <div className="text-secondary-text">выполнено</div>
+            </div>
+            <div>
+              <div className="text-[1.8rem] font-bold text-danger">
+                {shift.orders.cancelled + shift.orders.noShow + shift.orders.expired}
+              </div>
+              <div className="text-secondary-text">сорвано</div>
+            </div>
+          </div>
+          <div className="text-sm text-secondary-text">
+            На линии: {shift.drivers.onLine} · в поездке: {shift.drivers.busy} · работали: {shift.drivers.worked}
+          </div>
+          {shift.idleDrivers?.length > 0 && (
+            <div className="text-xs text-secondary-text">
+              Без заказов сегодня: {shift.idleDrivers.map((driver) => driver.displayName ?? "Водитель").join(", ")}
+            </div>
+          )}
+          {shift.lastHandover && (
+            <div className="bg-black/20 rounded-xl p-2 text-sm">
+              <div className="text-xs text-secondary-text">
+                Передача от {shift.lastHandover.author ?? "диспетчера"} ·{" "}
+                {new Date(shift.lastHandover.at).toLocaleTimeString("ru-RU", { hour: "2-digit", minute: "2-digit" })}
+              </div>
+              <div className="break-words">{shift.lastHandover.note}</div>
+            </div>
+          )}
+        </div>
+      )}
 
     </div>
   );

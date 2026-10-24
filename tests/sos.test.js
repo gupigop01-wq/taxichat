@@ -256,3 +256,50 @@ describe("operational city settings", () => {
     expect(noReason.status).toBe(400);
   });
 });
+
+describe("shift summary", () => {
+  it("counts today's orders and the drivers on the line", async () => {
+    const world = await setupPilotCity(app);
+    const DriverProfile = require("../models/DriverProfile");
+    const Membership = require("../models/Membership");
+    const membership = await Membership.findOne({ userId: world.drivers[0].user._id, role: "driver" });
+    await DriverProfile.findOneAndUpdate({ membershipId: membership._id }, { shift: "online" }, { upsert: true });
+
+    const created = await createOrder(app, world.passenger, world.city, { matchMode: "first_take" });
+    const orderId = created.body.data.order._id;
+    await request(app).post(`/api/orders/${orderId}/accept`).set("Cookie", world.drivers[0].cookie).send({});
+    for (const action of ["arrive", "wait", "start", "finish"]) {
+      await request(app).post(`/api/orders/${orderId}/action`).set("Cookie", world.drivers[0].cookie).send({ action });
+    }
+
+    const shift = await request(app)
+      .get(`/api/dispatch/${world.city._id}/shift`)
+      .set("Cookie", world.dispatcher.cookie);
+    expect(shift.status).toBe(200);
+    expect(shift.body.data.shift.orders.total).toBe(1);
+    expect(shift.body.data.shift.orders.completed).toBe(1);
+    expect(shift.body.data.shift.drivers.onLine).toBeGreaterThanOrEqual(1);
+    expect(shift.body.data.shift.drivers.worked).toBe(1);
+  });
+
+  it("keeps the handover note for the next shift and the journal", async () => {
+    const world = await setupPilotCity(app);
+    const saved = await request(app)
+      .post(`/api/dispatch/${world.city._id}/shift/handover`)
+      .set("Cookie", world.dispatcher.cookie)
+      .send({ note: "Проверить спор по заказу, водитель ждёт ответа" });
+    expect(saved.status).toBe(201);
+
+    const shift = await request(app)
+      .get(`/api/dispatch/${world.city._id}/shift`)
+      .set("Cookie", world.dispatcher.cookie);
+    expect(shift.body.data.shift.lastHandover.note).toBe("Проверить спор по заказу, водитель ждёт ответа");
+    expect(shift.body.data.shift.lastHandover.author).toBe(world.dispatcher.user.name);
+
+    const empty = await request(app)
+      .post(`/api/dispatch/${world.city._id}/shift/handover`)
+      .set("Cookie", world.dispatcher.cookie)
+      .send({ note: "" });
+    expect(empty.status).toBe(400);
+  });
+});

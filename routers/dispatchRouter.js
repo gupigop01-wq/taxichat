@@ -21,6 +21,10 @@ router
   .route("/:cityId/drivers/:membershipId/offline")
   .patch(cityController.forceDriverOffline);
 
+// Shift summary of the city day and the handover note
+router.route("/:cityId/shift").get(cityController.getShiftSummary);
+router.route("/:cityId/shift/handover").post(cityController.handoverShift);
+
 router.route("/:cityId/drivers").get(dispatchController.listDrivers);
 router.route("/drivers/:membershipId").patch(dispatchController.reviewDriver);
 
