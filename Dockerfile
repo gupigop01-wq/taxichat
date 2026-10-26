@@ -32,5 +32,7 @@ COPY data ./data
 COPY scripts ./scripts
 COPY --from=client-build /app/client/build ./client/build
 
+# A container has no proxy of its own, so the app answers on every interface
+ENV HOST=0.0.0.0
 EXPOSE 4000
 CMD ["node", "index.js"]

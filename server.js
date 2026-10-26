@@ -49,16 +49,22 @@ const start = async () => {
   await mongoose.connect(process.env.MONGO_URI);
   console.log("Database connected...");
 
-  // Auto-seed an empty database with demo data (Codespaces / Colab)
-  const User = require("./models/User");
-  if ((await User.countDocuments()) === 0) {
-    console.log("Empty database: seeding demo data...");
-    const { seedDemoData } = require("./scripts/seedData");
-    await seedDemoData();
+  // Auto-seed an empty database with demo data (Codespaces / Colab). Never in
+  // production: the demo accounts ship with a publicly documented password.
+  if (process.env.NODE_ENV !== "production") {
+    const User = require("./models/User");
+    if ((await User.countDocuments()) === 0) {
+      console.log("Empty database: seeding demo data...");
+      const { seedDemoData } = require("./scripts/seedData");
+      await seedDemoData();
+    }
   }
 
-  const expressServer = app.listen(process.env.PORT || 4000, () =>
-    console.log(`Listening on port ${process.env.PORT || 4000}`)
+  // Behind nginx by default: only the reverse proxy needs to reach the app
+  const host = process.env.HOST || "127.0.0.1";
+  const port = process.env.PORT || 4000;
+  const expressServer = app.listen(port, host, () =>
+    console.log(`Listening on http://${host}:${port}`)
   );
 
   if (process.env.NODE_ENV !== "test") {
