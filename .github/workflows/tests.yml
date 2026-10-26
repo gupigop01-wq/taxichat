@@ -17,6 +17,35 @@ jobs:
       - run: npm ci --no-audit --no-fund
       - run: npm test
 
+  client-lint:
+    # CRA treats warnings as errors when CI is set, so the build is also the
+    # lint gate; this job makes a lint regression visible on its own.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: client/package-lock.json
+      - run: npm ci --prefix client --no-audit --no-fund
+      - run: npx --prefix client eslint "src/**/*.{js,jsx}" --max-warnings 0
+        working-directory: client
+
+  client-tests:
+    runs-on: ubuntu-latest
+    env:
+      CI: true
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: client/package-lock.json
+      - run: npm ci --prefix client --no-audit --no-fund
+      - run: npm test --prefix client -- --watchAll=false
+
   client-build:
     runs-on: ubuntu-latest
     steps:

@@ -26,22 +26,28 @@ npm run dev              # http://localhost:4000
 cd client && npm install && npm start   # http://localhost:3000 (прокси на :4000)
 ```
 
-Тесты: `npm test` (jest + supertest + mongodb-memory-server, 110 тестов).
+Тесты: `npm test` (jest + supertest + mongodb-memory-server; набор растёт —
+актуальное число печатает сам jest). Клиент: `cd client && npm test`
+(react-scripts test) и `npm run build`. Сборка клиента в CI
+(`CI=true`) падает на любом предупреждении eslint; отдельный шаг
+`npx eslint "src/**/*.{js,jsx}" --max-warnings 0` показывает линт отдельно.
 
 Проверка полного dev-цикла (Mongo в памяти, API, CRA dev-сервер, прокси REST
 и WebSocket): `npm run smoke:dev`.
 
 ### Демо-аккаунты (после `npm run seed`)
 
-Все с паролем `password123`. Казань — PILOT (диспетчер + 3 водителя), Самара — WAITLIST.
+Все с паролем `Bombila2026`. Демо-город — **Слюдянка**: в нём есть диспетчер,
+три водителя и пассажир, он же открывается при входе. Второй город в наборе —
+Култук, в нём только диспетчер (для проверки перекрёстных сценариев).
 
 | Логин | Роль |
 |---|---|
-| `passenger` | пассажир в Казани |
-| `driver1`…`driver3` | водители в Казани |
-| `dispatcher` | диспетчер Казани |
-| `dispatcher2` | диспетчер Самары |
-| `regionadmin` | админ Самарской области |
+| `passenger` | пассажир в Слюдянке |
+| `driver1`…`driver3` | водители в Слюдянке |
+| `dispatcher` | диспетчер Слюдянки |
+| `dispatcher2` | диспетчер Култука |
+| `regionadmin` | админ региона Слюдянки (Иркутская область) |
 | `superadmin` | суперадмин платформы |
 
 ## Данные
@@ -73,6 +79,8 @@ cd client && npm install && npm start   # http://localhost:3000 (прокси н
 stateDiagram-v2
     [*] --> DRAFT
     DRAFT --> PUBLISHED: publish (пассажир)
+    PUBLISHED --> BOOKED: book (водитель бронирует предзаказ)
+    BOOKED --> ASSIGNED: activate (бронь активирована)
     PUBLISHED --> ASSIGNED: assign (пассажир выбрал отклик / водитель принял / диспетчер)
     ASSIGNED --> ARRIVING: arrive (водитель)
     ARRIVING --> WAITING: wait (водитель)
@@ -88,7 +96,14 @@ stateDiagram-v2
     WAITING --> CANCELLED: cancel
     IN_RIDE --> CANCELLED: cancel
     PUBLISHED --> DISPUTE: dispute (подключается диспетчер)
+    BOOKED --> DISPUTE: dispute
     ASSIGNED --> DISPUTE: dispute
+    ARRIVING --> DISPUTE: dispute
+    WAITING --> DISPUTE: dispute
+    IN_RIDE --> DISPUTE: dispute
+    DISPUTE --> COMPLETED: resolve_complete (решение диспетчера)
+    DISPUTE --> CANCELLED: resolve_cancel
+    NO_SHOW --> PUBLISHED: новая публикация (republish — создаётся обычный заказ)
 ```
 
 Любое изменение статуса проходит через единый `transition(order, event,
@@ -116,10 +131,12 @@ actor)` (services/orderService.js): проверка таблицы перехо
 | POST | `/api/orders/:id/accept`, `/assign` | принять / назначить |
 | POST | `/api/orders/:id/rating`, `/sos` | оценка и SOS |
 | GET | `/api/orders/:id/share`, `/api/share/:token` | ссылка для близких (только маршрут/статус/машина) |
-| GET | `/api/calls/ice` | временные TURN-креды (HMAC) |
+| GET | `/api/calls/ice?orderId=` | временные TURN-креды (HMAC); только участнику заказа |
 | GET | `/api/cities/:id/free-drivers` | свободные водители (без телефонов) |
 | POST/GET/DELETE | `/api/favorites`, `/api/blocks` | избранные и блокировки |
 | GET/POST | `/api/chats/my`, `/api/chats/:id/messages`, `/read`, `/offers` | диалоги прямых звонков с непрочитанными |
+| POST/GET | `/api/upload`, `/api/uploads/:file` | медиа чата; нужен `orderId` или `chatId` с участием |
+| GET/POST/DELETE | `/api/push/vapid-public`, `/api/push/subscribe`, `/unsubscribe` | Web Push подписки устройства |
 | PATCH | `/api/drivers/me/settings`, `/api/users/me/home-city` | настройки |
 
 ## Сокет-события
@@ -130,10 +147,16 @@ ACTIVE-членствам. На этапе рукопожатия сервер �
 `user:message` действует анти-флуд (30 пакетов/минуту).
 
 - Сервер → клиент: `order:new`, `order:taken`, `order:offer`, `order:status`,
-  `chat:message`, `driver:presence`, `sos:raised`, `call:invite`,
-  `call:answer`, `call:ice`, `call:end`, `call:busy`.
-- Клиент → сервер: `user:online`, `call:invite`, `call:answer`, `call:ice`,
-  `call:end`, `driver:shift`, `driver:heartbeat`.
+  `order:offersChanged`, `chat:message`, `driver:presence`, `driver:offline`,
+  `driver:error`, `membership:updated`, `sos:raised`, `sos:taken`, `sos:closed`,
+  `call:invite`, `call:answer`, `call:ice`, `call:end`, `call:busy`.
+- Клиент → сервер: `user:online`, `order:join`, `order:leave`, `call:invite`,
+  `call:answer`, `call:ice`, `call:end`, `driver:shift` (с
+  `confirmBack: true` после снятия диспетчером), `driver:heartbeat`.
+
+Снятие с линии: диспетчер ставит `shiftNote` и `shift: offline`; обычный
+`driver:shift` с `online` отклоняется (`driver:offline` с причиной), вернуться
+можно только явным `confirmBack: true`. Heartbeat на смену не влияет.
 
 ## Фоновые задачи (Agenda)
 
@@ -150,8 +173,15 @@ ACTIVE-членствам. На этапе рукопожатия сервер �
 - Голосовые звонки — audio-only через TURN (`iceTransportPolicy: relay`),
   лимиты: 5 неотвеченных → пауза 2 минуты, 1 параллельный вызов,
   10 вызовов/час, 3 неответа одному водителю/час.
-- Обязательная причина отмены; отмена после назначения даёт штрафной балл,
-  10 баллов — автобан аккаунта.
+- Обязательная причина отмены; отмена после назначения виновной стороной даёт
+  штрафной балл (невиновная сторона не штрафуется: пассажир не вышел —
+  водитель отменил после ожидания, водитель сорвал подачу — пассажир).
+  Баллы затухают: один балл уходит за каждые сутки без новых нарушений;
+  10 баллов — автобан на 3 суток, который снимается сам (или админом).
+- Медиа (`/api/upload`) принимается только для заказа или чата, где
+  пользователь участник; TURN-креды выдаются только участнику заказа.
+- Web Push (VAPID): уведомления о статусе, откликах, SOS; кнопки «Принять/
+  Отказаться» прямо в шторке.
 - Журнал аудита назначений, бан аккаунта,
   rate limiting (300 req/min глобально, 20/15 мин на логин).
 
@@ -160,7 +190,8 @@ ACTIVE-членствам. На этапе рукопожатия сервер �
 После логина открывается рабочее пространство TaxiChat:
 
 - **Шапка** — выбор города (со статусом) и переключение доступных ролей;
-  легаси-чаты контактов доступны во вкладке «Чаты».
+  нижние вкладки «Заказы» (панель роли), «Поездки» (журнал и чаты заказов),
+  «Кабинет» (роли, диалоги, настройки).
 - **Пассажир** — форма заказа с автодополнением ориентиров («от ЖД»),
   точными адресами и предзаказами; мои заказы; «Свободные водители» с
   прямым звонком и избранными.
@@ -185,8 +216,8 @@ ACTIVE-членствам. На этапе рукопожатия сервер �
    вида `*.app.github.dev` открывается под вашим аккаунтом GitHub.
    Полностью анонимная ссылка — `*.trycloudflare.com` из `cf.log` внутри
    Codespace (адрес ротируется при каждом перезапуске туннеля).
-5. Демо-входы: `passenger`, `driver1`…`driver3`, `dispatcher`, `regionadmin`,
-   `superadmin` — пароль `password123`.
+5. Демо-входы: `passenger`, `driver1`…`driver3`, `dispatcher`, `dispatcher2`,
+   `regionadmin`, `superadmin` — пароль `Bombila2026`.
 
 При пробуждении Codespace после простоя сервер и туннель поднимаются сами
 (`postStartCommand`), но адрес trycloudflare обновится — актуальный смотрится
@@ -203,8 +234,26 @@ docker compose up -d --build   # app (:4000) + mongo + coturn
 ```
 
 Рядом с `docker-compose.yml` создайте `.env` с `JWT_SECRET_KEY`,
-`CLOUDINARY_NAME/API_KEY/API_SECRET`, `TURN_URL`/`TURN_SECRET` (переменные
-подхватываются compose). Клиент собирается внутри образа и раздаётся API-сервером.
+`CLOUDINARY_NAME/API_KEY/API_SECRET`, `TURN_URL`/`TURN_SECRET`, `VAPID_PUBLIC_KEY`/
+`VAPID_PRIVATE_KEY` (переменные подхватываются compose). Клиент собирается
+внутри образа и раздаётся API-сервером.
+
+### Push-уведомления (Web Push / VAPID)
+
+Сервер зависит от пакета `web-push` (уже в `package.json`). Ключи генерируются
+один раз и кладутся в `.env` сервера:
+
+```bash
+npx web-push generate-vapid-keys
+# VAPID_PUBLIC_KEY=...
+# VAPID_PRIVATE_KEY=...
+# VAPID_SUBJECT=mailto:admin@example.ru
+```
+
+Без ключей приложение работает, но push отключён: `/api/push/vapid-public`
+отвечает 503, и в логе один раз появляется предупреждение. Если отсутствует
+сам пакет `web-push`, при старте в лог пишется ошибка `[push] FATAL`.
+Пуши поддерживаются только в установленном приложении (PWA) и по HTTPS.
 
 ### Медиа (фото и голосовые в чатах)
 
@@ -227,7 +276,8 @@ docker compose up -d --build   # app (:4000) + mongo + coturn
 1. MongoDB — бесплатный кластер MongoDB Atlas; скопируйте `MONGO_URI`.
 2. Сервис из `Dockerfile` этого репозитория; переменные:
    `MONGO_URI`, `JWT_SECRET_KEY`, `CLIENT_URL` (адрес фронтенда),
-   `CLOUDINARY_NAME/API_KEY/API_SECRET`, опционально `TURN_URL`/`TURN_SECRET`.
+   `CLOUDINARY_NAME/API_KEY/API_SECRET`, опционально `TURN_URL`/`TURN_SECRET`,
+   `VAPID_PUBLIC_KEY`/`VAPID_PRIVATE_KEY`/`VAPID_SUBJECT` (push).
 3. WebSocket поддерживается платформой; для звонков за NAT нужен TURN
    (coturn из compose на VPS с публичным IP).
 4. Seed: одноразовая задача `npm run seed` с тем же `MONGO_URI`.
