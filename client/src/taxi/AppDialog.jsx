@@ -14,6 +14,7 @@ export const DialogProvider = ({ children }) => {
   const boxRef = useRef(null);
   const inputRef = useRef(null);
   const cancelRef = useRef(null);
+  const okRef = useRef(null);
   const titleId = useId();
   const descriptionId = useId();
 
@@ -38,7 +39,9 @@ export const DialogProvider = ({ children }) => {
   useEffect(() => {
     if (!dialog) return undefined;
     const previousFocus = document.activeElement;
-    (dialog.kind === "ask" ? inputRef : cancelRef).current?.focus();
+    (dialog.kind === "ask" ? inputRef.current : (cancelRef.current ?? okRef.current))?.focus();
+    // Editing an existing value: typing must replace it, not append to it
+    if (dialog.kind === "ask" && dialog.autoSelect) inputRef.current?.select();
     const onKeyDown = (event) => {
       if (event.key === "Escape") {
         event.preventDefault();
@@ -87,16 +90,19 @@ export const DialogProvider = ({ children }) => {
                 }}
               />
             )}
-            <div className="grid grid-cols-2 gap-2">
+            <div className={`grid ${dialog.cancelText === null ? "grid-cols-1" : "grid-cols-2"} gap-2`}>
+              {dialog.cancelText !== null && (
+                <button
+                  ref={cancelRef}
+                  type="button"
+                  className="rounded-xl py-2 text-[1.3rem] bg-white/10 border border-white/10"
+                  onClick={() => finish(dialog.kind === "ask" ? null : false)}
+                >
+                  {dialog.cancelText ?? "Отмена"}
+                </button>
+              )}
               <button
-                ref={cancelRef}
-                type="button"
-                className="rounded-xl py-2 text-[1.3rem] bg-white/10 border border-white/10"
-                onClick={() => finish(dialog.kind === "ask" ? null : false)}
-              >
-                Отмена
-              </button>
-              <button
+                ref={okRef}
                 type="button"
                 className={`rounded-xl py-2 text-[1.3rem] font-bold ${dialog.danger ? "bg-danger text-white" : "btn-accent"}`}
                 onClick={() =>

@@ -6,12 +6,18 @@ import { apiGet } from "./api";
 // Voice calls over WebRTC with the server-side signaling (concept 1.7.1):
 // call:invite -> call:answer -> call:end. Audio only, relay via TURN when
 // configured, so participant IP addresses stay hidden.
+// TURN credentials are issued per order: a direct call borrows the order
+// already linked to its chat (the call itself has no order yet).
 const getIceConfig = async (orderId, signal) => {
   try {
-    const res = await apiGet(
-      `/api/calls/ice${orderId ? `?orderId=${orderId}` : ""}`,
-      { signal }
-    );
+    let id = orderId;
+    if (!id) {
+      const chats = await apiGet("/api/chats/my", { signal });
+      const withOrder = (chats.data.chats ?? []).find((chat) => chat.orderId);
+      id = withOrder?.orderId ?? null;
+    }
+    if (!id) throw new Error("Нет заказа для звонка");
+    const res = await apiGet(`/api/calls/ice?orderId=${id}`, { signal });
     return {
       iceServers: res.data.iceServers,
       iceTransportPolicy: res.data.iceTransportPolicy,

@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { apiGet, apiPost, apiPatch } from "./api";
 import { useDialog } from "./AppDialog";
 import { statusBadge, formatWhen } from "./statusLabels";
@@ -6,16 +6,17 @@ import { useDispatch } from "react-redux";
 import { notificationActions } from "../store/notificationSlice";
 import useSocket from "../hooks/useSocket";
 import OrderChat from "./OrderChat";
-import { IconText } from "./TaxiIcon";
+import TaxiIcon, { IconText } from "./TaxiIcon";
+import WaitingInfo from "./WaitingInfo";
 
 // Dispatcher panel: city order queue, manual assignment, driver applications
 // review and the region admin sections (concept 1.3 / 1.9)
 const callLink = (phone) => `tel:${String(phone).replace(/[^\d+]/g, "")}`;
 
-const DispatcherPanel = ({ cityId, role, me }) => {
+const DispatcherPanel = ({ cityId, cityTz, role, me }) => {
   const { ask, confirm } = useDialog();
   const dispatch = useDispatch();
-  const { socketListen, socket } = useSocket();
+  const { socket } = useSocket();
   const [orders, setOrders] = useState([]);
   const [pending, setPending] = useState([]);
   const [activeDrivers, setActiveDrivers] = useState([]);
@@ -29,6 +30,7 @@ const DispatcherPanel = ({ cityId, role, me }) => {
     dispatchPhone: null,
     dispatchPhoneNote: "",
     waitingMinutes: 10,
+    waitingPricePerMin: 0,
     preorderLeadMinutes: 30,
     directOrderTimeoutMin: 10,
     cascadeTimeouts: { favorites: 20, zone: 60, neighbors: 120, city: 300, expire: 600 },
@@ -46,14 +48,14 @@ const DispatcherPanel = ({ cityId, role, me }) => {
 
   const isRegionAdmin = role === "region_admin";
 
-  const loadCitySettings = async () => {
+  const loadCitySettings = useCallback(async () => {
     try {
       const res = await apiGet(`/api/dispatch/${cityId}/settings`);
       setCitySettings(res.data.settings);
     } catch {
       // The line is informational: its failure must not block the queue
     }
-  };
+  }, [cityId]);
 
   const editDispatchPhone = async () => {
     const answer = await ask({
@@ -79,28 +81,72 @@ const DispatcherPanel = ({ cityId, role, me }) => {
     }
   };
 
+  // Timers are asked one by one: a combined "3 · 5 · 600 · 30" line is
+  // impossible to fill in on a phone. Cancelling any step aborts the edit.
+  const askTimer = async ({ title, text, initial, min, max, okText }) => {
+    let note = text;
+    for (;;) {
+      const answer = await ask({
+        title,
+        text: note,
+        placeholder: `${min}–${max}`,
+        initial: String(initial),
+        inputType: "text",
+        inputMode: "numeric",
+        autoSelect: true,
+        okText,
+      });
+      if (answer === null) return null;
+      const value = Number(answer);
+      if (Number.isInteger(value) && value >= min && value <= max) return value;
+      note = `${text}. Нужно целое число от ${min} до ${max}`;
+    }
+  };
+
   const editTimers = async () => {
-    const answer = await ask({
-      title: "Таймеры города",
-      placeholder: "Ожидание (мин) · истечение заказа (с) · предзаказ (мин)",
-      initial: [
-        citySettings.waitingMinutes,
-        citySettings.cascadeTimeouts?.expire,
-        citySettings.preorderLeadMinutes,
-      ].join(" · "),
+    const waitingMinutes = await askTimer({
+      title: "Бесплатное ожидание",
+      text: "Шаг 1 из 4 · сколько минут ждать пассажира бесплатно",
+      initial: citySettings.waitingMinutes,
+      min: 1,
+      max: 60,
+      okText: "Далее",
+    });
+    if (waitingMinutes === null) return;
+    const waitingPricePerMin = await askTimer({
+      title: "Платное ожидание",
+      text: "Шаг 2 из 4 · рублей за минуту после бесплатных, 0 — без платного ожидания",
+      initial: citySettings.waitingPricePerMin ?? 0,
+      min: 0,
+      max: 10000,
+      okText: "Далее",
+    });
+    if (waitingPricePerMin === null) return;
+    const expire = await askTimer({
+      title: "Истечение заказа",
+      text: "Шаг 3 из 4 · секунд без водителя до истечения заказа",
+      initial: citySettings.cascadeTimeouts?.expire ?? 600,
+      min: 60,
+      max: 7200,
+      okText: "Далее",
+    });
+    if (expire === null) return;
+    const preorderLeadMinutes = await askTimer({
+      title: "Предзаказ",
+      text: "Шаг 4 из 4 · за сколько минут до брони начинать поиск водителя",
+      initial: citySettings.preorderLeadMinutes ?? 30,
+      min: 5,
+      max: 240,
       okText: "Сохранить",
     });
-    if (!answer) return;
-    const [waiting, expire, lead] = answer
-      .split(/[·;,]/)
-      .map((part) => Number(part.trim()))
-      .filter((value) => Number.isFinite(value) && value > 0);
-    if (waiting === undefined) return;
+    if (preorderLeadMinutes === null) return;
+
     try {
       const res = await apiPatch(`/api/dispatch/${cityId}/timers`, {
-        ...(waiting && { waitingMinutes: waiting }),
-        ...(expire && { cascadeTimeouts: { expire } }),
-        ...(lead && { preorderLeadMinutes: lead }),
+        waitingMinutes,
+        waitingPricePerMin,
+        cascadeTimeouts: { expire },
+        preorderLeadMinutes,
       });
       setCitySettings(res.data.settings);
       dispatch(notificationActions.addNotification({ message: "Таймеры города обновлены", type: "success" }));
@@ -139,14 +185,14 @@ const DispatcherPanel = ({ cityId, role, me }) => {
     }
   };
 
-  const loadShift = async () => {
+  const loadShift = useCallback(async () => {
     try {
       const res = await apiGet(`/api/dispatch/${cityId}/shift`);
       setShift(res.data.shift);
     } catch {
       // Summary is informational
     }
-  };
+  }, [cityId]);
 
   const handover = async () => {
     const note = await ask({
@@ -164,15 +210,15 @@ const DispatcherPanel = ({ cityId, role, me }) => {
     }
   };
 
-  const loadSos = async () => {
+  const loadSos = useCallback(async () => {
     try {
       const res = await apiGet(`/api/dispatch/${cityId}/sos`);
       setSos(res.data.signals);
     } catch (err) {
       // SOS must never hide the queue: a failure here is not a panel error
     }
-  };
-  const load = async () => {
+  }, [cityId]);
+  const load = useCallback(async () => {
     try {
       const [ordersRes, pendingRes, driversRes] = await Promise.all([
         apiGet(`/api/orders?cityId=${cityId}`),
@@ -185,9 +231,9 @@ const DispatcherPanel = ({ cityId, role, me }) => {
     } catch (err) {
       setError(err.message);
     }
-  };
+  }, [cityId]);
 
-  const loadAdmin = async (tab) => {
+  const loadAdmin = useCallback(async (tab) => {
     if (!isRegionAdmin) return;
     try {
       if (tab === "applications") {
@@ -205,7 +251,7 @@ const DispatcherPanel = ({ cityId, role, me }) => {
     } catch (err) {
       setError(err.message);
     }
-  };
+  }, [isRegionAdmin]);
 
   useEffect(() => {
     load();
@@ -220,11 +266,11 @@ const DispatcherPanel = ({ cityId, role, me }) => {
       setSos((current) => current.filter((item) => String(item._id) !== String(payload.complaintId)));
     };
     const onSosTaken = () => loadSos();
-    socketListen("order:new", onChanged);
-    socketListen("order:status", onChanged);
-    socketListen("sos:raised", onSos);
-    socketListen("sos:closed", onSosClosed);
-    socketListen("sos:taken", onSosTaken);
+    socket.on("order:new", onChanged);
+    socket.on("order:status", onChanged);
+    socket.on("sos:raised", onSos);
+    socket.on("sos:closed", onSosClosed);
+    socket.on("sos:taken", onSosTaken);
     // A phone that slept reconnects with an empty state: refresh the signals
     const onConnect = () => loadSos();
     socket.on("connect", onConnect);
@@ -236,16 +282,24 @@ const DispatcherPanel = ({ cityId, role, me }) => {
       socket.off("sos:taken", onSosTaken);
       socket.off("connect", onConnect);
     };
-  }, [cityId]);
+  }, [cityId, load, loadSos, loadShift, loadCitySettings, socket]);
 
   // The admin sections (applications, complaints, audit) are region-admin only;
   // a dispatcher must not request them or see their 403 as a panel error.
   useEffect(() => {
     if (isRegionAdmin && adminTab) loadAdmin(adminTab);
-  }, [adminTab, isRegionAdmin]);
+  }, [adminTab, isRegionAdmin, loadAdmin]);
 
   if (view) {
-    return <OrderChat orderId={view} me={me} onBack={() => setView(null)} startCall={() => {}} />;
+    return (
+      <OrderChat
+        orderId={view}
+        me={me}
+        cityTz={cityTz}
+        onBack={() => setView(null)}
+        startCall={() => {}}
+      />
+    );
   }
 
   const takeSos = async (signal) => {
@@ -307,6 +361,28 @@ const DispatcherPanel = ({ cityId, role, me }) => {
       setError(err.message);
     } finally {
       setAssignPending(null);
+    }
+  };
+
+  const cancelOrder = async (order) => {
+    const reason = await ask({
+      title: "❌ Причина отмены заказа",
+      placeholder: "Коротко, почему отменяем (пассажир и водитель увидят)",
+      okText: "Отменить заказ",
+      danger: true,
+    });
+    if (!reason) return;
+    try {
+      await apiPost(`/api/orders/${order._id}/cancel`, { reason });
+      dispatch(
+        notificationActions.addNotification({
+          message: "Заказ отменён диспетчером",
+          type: "success",
+        })
+      );
+      load();
+    } catch (err) {
+      setError(err.message);
     }
   };
 
@@ -381,9 +457,13 @@ const DispatcherPanel = ({ cityId, role, me }) => {
         )}
       </div>
       <div className="text-secondary-text mt-1">
-          <IconText>{statusBadge(order.status)}</IconText> · <IconText>{formatWhen(order.when)}</IconText> · {order.pax} пасс.
+          <IconText>{statusBadge(order.status)}</IconText> · <IconText>{formatWhen(order.when, cityTz)}</IconText> · {order.pax} пасс.
       </div>
+      {order.waiting && <WaitingInfo waiting={order.waiting} className="mt-1 text-sm" />}
       {order.driver?.displayName && <div className="text-secondary-text mt-1">Водитель: {order.driver.displayName}</div>}
+      {order.previousStatus && (
+        <div className="text-secondary-text mt-1">До спора: {statusBadge(order.previousStatus)}</div>
+      )}
       <div className="flex gap-2 mt-3 items-center flex-wrap">
         {order.status === "PUBLISHED" && (
           <>
@@ -402,8 +482,19 @@ const DispatcherPanel = ({ cityId, role, me }) => {
             </button>
           </>
         )}
-        <button className="underline" onClick={() => setView(order._id)}>
-          Открыть заказ
+        {["ASSIGNED", "ARRIVING", "WAITING", "IN_RIDE"].includes(order.status) && (
+          <button
+            className="border border-danger text-danger px-3 py-2 rounded-xl font-semibold"
+            onClick={() => cancelOrder(order)}
+          >
+            Отменить заказ
+          </button>
+        )}
+        <button
+          className={order.status === "DISPUTE" ? "btn-accent press px-3 py-2 rounded-xl font-semibold" : "underline"}
+          onClick={() => setView(order._id)}
+        >
+          {order.status === "DISPUTE" ? "Разобрать спор" : "Открыть заказ"}
         </button>
       </div>
     </div>
@@ -503,7 +594,10 @@ const DispatcherPanel = ({ cityId, role, me }) => {
         {!citySettings.dispatchPhone && (
           <div className="text-xs text-secondary-text">Номер не задан — пассажиры не смогут позвонить</div>
         )}
-        <button className="underline text-sm" onClick={editDispatchPhone}>
+        <button
+          className="press bg-secondary border border-secondary-text/30 px-3 py-2 rounded-xl font-semibold text-sm"
+          onClick={editDispatchPhone}
+        >
           {citySettings.dispatchPhone ? "Изменить номер" : "Добавить номер"}
         </button>
       </div>
@@ -582,7 +676,7 @@ const DispatcherPanel = ({ cityId, role, me }) => {
                       Решено
                     </button>
                     <button
-                      className="underline"
+                      className="border border-danger text-danger px-3 py-1 rounded font-semibold"
                       onClick={() => resolveComplaint(complaint._id, "DISMISSED")}
                     >
                       Отклонить
@@ -660,26 +754,79 @@ const DispatcherPanel = ({ cityId, role, me }) => {
           {activeDrivers.length === 0 && (
             <div className="text-sm text-secondary-text">Никого на линии</div>
           )}
-          {activeDrivers.map((driver) => (
-            <div key={driver._id} className="glass rounded-xl p-3 flex flex-wrap items-center gap-2 justify-between">
-              <div className="min-w-0">
-                <div className="font-semibold truncate">{driver.displayName}</div>
-                <div className="text-xs text-secondary-text truncate">{driver.carCaption || "без машины"}</div>
+          {activeDrivers.map((driver) => {
+            const onLine = driver.shift !== "offline";
+            const busy = Boolean(driver.activeOrder);
+            return (
+              <div key={driver._id} className="glass rounded-2xl p-3 space-y-2">
+                <div className="flex items-start justify-between gap-2">
+                  <div className="min-w-0 flex-1">
+                    <div className="font-semibold break-words">
+                      {driver.displayName || driver.user?.name || "Водитель"}
+                      {driver.user?.username && (
+                        <span className="text-xs text-secondary-text"> · {driver.user.username}</span>
+                      )}
+                    </div>
+                    <div className="text-xs text-secondary-text break-words">
+                      {driver.carCaption || "машина не указана"}
+                    </div>
+                  </div>
+                  <span
+                    className={`text-xs rounded-full px-2 py-0.5 font-semibold ${
+                      busy ? "bg-warning text-black" : onLine ? "bg-success text-white" : "bg-secondary text-secondary-text"
+                    }`}
+                  >
+                    {busy
+                      ? `В поездке · ${statusBadge(driver.activeOrder.status)}`
+                      : onLine
+                        ? "На линии"
+                        : "Не на линии"}
+                  </span>
+                </div>
+                {driver.phone && (
+                  <div className="text-sm">
+                    <span className="text-secondary-text">Телефон: </span>
+                    <a className="text-cta-icon" href={callLink(driver.phone)}>{driver.phone}</a>
+                  </div>
+                )}
+                {driver.activeOrder && (
+                  <div className="text-xs text-secondary-text break-words">
+                    Заказ: {driver.activeOrder.from}
+                    {driver.activeOrder.to ? ` → ${driver.activeOrder.to}` : ""} ·{" "}
+                    {statusBadge(driver.activeOrder.status)}
+                  </div>
+                )}
+                {driver.shiftNote && (
+                  <div className="text-xs text-danger break-words">Снят: {driver.shiftNote}</div>
+                )}
+                <div className="flex flex-wrap gap-2 pt-1">
+                  {driver.phone && (
+                    <button
+                      className="press bg-success text-white px-3 py-2 rounded-xl font-semibold inline-flex items-center gap-1.5"
+                      onClick={() => { window.location.href = callLink(driver.phone); }}
+                    >
+                      <TaxiIcon name="phone" size={18} /> Позвонить
+                    </button>
+                  )}
+                  {driver.activeOrder && (
+                    <button
+                      className="press bg-secondary border border-secondary-text/30 px-3 py-2 rounded-xl font-semibold inline-flex items-center gap-1.5"
+                      onClick={() => setView(driver.activeOrder._id)}
+                    >
+                      <TaxiIcon name="message" size={18} /> Открыть чат
+                    </button>
+                  )}
+                  <button
+                    className="press border border-danger text-danger px-3 py-2 rounded-xl font-semibold disabled:opacity-50"
+                    disabled={offlineBusy === driver._id || !onLine}
+                    onClick={() => forceOffline(driver)}
+                  >
+                    {offlineBusy === driver._id ? "Снимаем…" : "Снять с линии"}
+                  </button>
+                </div>
               </div>
-              {driver.phone && (
-                <a className="text-cta-icon underline text-sm" href={callLink(driver.phone)}>
-                  Позвонить
-                </a>
-              )}
-              <button
-                className="text-danger underline text-sm disabled:opacity-50"
-                disabled={offlineBusy === driver._id}
-                onClick={() => forceOffline(driver)}
-              >
-                {offlineBusy === driver._id ? "Снимаем…" : "Снять с линии"}
-              </button>
-            </div>
-          ))}
+            );
+          })}
         </div>
       </div>
 
@@ -687,10 +834,17 @@ const DispatcherPanel = ({ cityId, role, me }) => {
       <div className="glass rounded-2xl p-3 space-y-2">
         <div className="font-semibold">Таймеры города</div>
         <div className="text-sm text-secondary-text">
-          Ожидание пассажира: {citySettings.waitingMinutes} мин · истечение заказа:{" "}
-          {citySettings.cascadeTimeouts?.expire} с · предзаказ за {citySettings.preorderLeadMinutes} мин
+          Ожидание пассажира: {citySettings.waitingMinutes} мин бесплатно
+          {citySettings.waitingPricePerMin > 0
+            ? ` · далее ${citySettings.waitingPricePerMin} ₽/мин`
+            : " · платного ожидания нет"}{" "}
+          · истечение заказа: {citySettings.cascadeTimeouts?.expire} с · предзаказ за{" "}
+          {citySettings.preorderLeadMinutes} мин
         </div>
-        <button className="underline text-sm" onClick={editTimers}>
+        <button
+          className="press bg-secondary border border-secondary-text/30 px-3 py-2 rounded-xl font-semibold text-sm"
+          onClick={editTimers}
+        >
           Изменить таймеры
         </button>
       </div>
@@ -700,7 +854,10 @@ const DispatcherPanel = ({ cityId, role, me }) => {
         <div className="glass rounded-2xl p-3 space-y-2">
           <div className="flex items-center justify-between gap-2">
             <div className="font-semibold">Смена · сегодня</div>
-            <button className="underline text-sm" onClick={handover}>
+            <button
+              className="press bg-secondary border border-secondary-text/30 px-3 py-2 rounded-xl font-semibold text-sm"
+              onClick={handover}
+            >
               Сменить диспетчера
             </button>
           </div>

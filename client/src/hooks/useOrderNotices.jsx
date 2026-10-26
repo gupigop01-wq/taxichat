@@ -5,19 +5,21 @@ import useSocket from "./useSocket";
 import { orderStatusNotice, newOrderNotice, newOfferNotice, newMessageNotice, orderRatedNotice } from "../taxi/orderNotices";
 
 // Live notices for the current role only:
-//  - driver/dispatcher: new orders in the city
+//  - driver on the line/dispatcher: new orders in the city
 //  - passenger: offers and status of own orders
 //  - participant (passenger or assigned driver): status of own order
 // Personal and order-room status copies share scope "order" and an eventId.
 // The city copy only refreshes lists; participants get one notice on any page.
-const useOrderNotices = ({ role, userId }) => {
+const useOrderNotices = ({ role, userId, onLine = true }) => {
   const dispatch = useDispatch();
   const { socket } = useSocket();
   const roleRef = useRef(role);
   const userRef = useRef(userId);
+  const onLineRef = useRef(onLine);
   const shownKeys = useRef(new Set());
   roleRef.current = role;
   userRef.current = userId;
+  onLineRef.current = onLine;
 
   useEffect(() => {
     const show = (notice) => dispatch(notificationActions.addNotification(notice));
@@ -33,7 +35,11 @@ const useOrderNotices = ({ role, userId }) => {
     };
 
     const onNew = () => {
-      if (["driver", "dispatcher", "region_admin"].includes(roleRef.current)) show(newOrderNotice());
+      const current = roleRef.current;
+      // The city broadcast reaches every connected driver: only the one who is
+      // on the line is looking for work, so an off-shift phone must stay silent.
+      if (current === "driver" && !onLineRef.current) return;
+      if (["driver", "dispatcher", "region_admin"].includes(current)) show(newOrderNotice());
     };
     const onOffer = (payload) => {
       if (roleRef.current === "passenger") {

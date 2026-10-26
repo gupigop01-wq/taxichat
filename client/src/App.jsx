@@ -1,48 +1,28 @@
-import DeleteChat from "./components/globals/DeleteChat";
-import DeleteContact from "./components/globals/DeleteContact";
-import NewContactForm from "./components/globals/NewContactForm";
-import VoiceCallModal from "./components/globals/VoiceCallModal";
-import Authentication from "./pages/Authentication";
-import UserProfile from "./pages/UserProfile";
+import { PwaGate } from "./taxi/PwaGate";
+import { DialogProvider } from "./taxi/AppDialog";
+import { Notification } from "./taxi/Notification";
+import Authentication from "./taxi/Authentication";
 import TaxiApp from "./taxi/TaxiApp";
 import useInit from "./hooks/useInit";
-import Notification from "./components/globals/Notification";
-import { DialogProvider } from "./taxi/AppDialog";
-import { PwaGate } from "./taxi/PwaGate";
-import { useSelector } from "react-redux";
 import useAppHeight from "./hooks/useAppHeight";
 
+// App shell: PWA install gate -> dialogs -> login or the taxi workspace.
+// The legacy Telegram-clone screens (contact chats, profile panel) are gone.
 function App() {
   // Initialize application
   const { loggedIn } = useInit();
-  const modalType = useSelector((state) => state.modalReducer.type);
   useAppHeight();
 
   return (
     <PwaGate>
-    <DialogProvider>
-    <div className="w-full h-full flex overflow-hidden bg-primary relative">
-      {loggedIn && (
-        <>
-          {/* TaxiChat workspace (legacy contact chats inside the "Чаты" tab) */}
-          <TaxiApp />
-          <UserProfile />
-        </>
-      )}
+      <DialogProvider>
+        <div className="w-full h-full flex overflow-hidden bg-primary relative">
+          {loggedIn ? <TaxiApp /> : <Authentication />}
 
-      {!loggedIn && <Authentication />}
-
-      {/* Notification */}
-      <Notification />
-
-      {/* Modals */}
-      <DeleteChat />
-      <DeleteContact />
-      <NewContactForm />
-
-      {modalType === "voiceCallModal" && <VoiceCallModal />}
-    </div>
-    </DialogProvider>
+          {/* Notification */}
+          <Notification />
+        </div>
+      </DialogProvider>
     </PwaGate>
   );
 }

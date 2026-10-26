@@ -3,6 +3,7 @@ import TaxiIcon from "./TaxiIcon";
 
 // The app is PWA-only: in a browser tab the user sees an install gate with the
 // native install button instead of the application itself.
+// Tests switch the mode through setupTests.js; no URL or console bypass exists.
 const isStandalone = () => {
   if (typeof window === "undefined") return true;
   return (

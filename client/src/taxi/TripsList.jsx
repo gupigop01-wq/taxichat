@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { apiGet } from "./api";
 import useSocket from "../hooks/useSocket";
 import { statusBadge, formatWhen } from "./statusLabels";
@@ -8,33 +8,33 @@ import { IconText } from "./TaxiIcon";
 // trip opens its order chat (driver and passenger share the same screen).
 const ACTIVE = ["PUBLISHED", "BOOKED", "ASSIGNED", "ARRIVING", "WAITING", "IN_RIDE", "DISPUTE"];
 
-const TripsList = ({ cityId, me, onOpen }) => {
+const TripsList = ({ cityId, cityTz, me, onOpen }) => {
   const [trips, setTrips] = useState([]);
   const [filter, setFilter] = useState("active");
   const [error, setError] = useState(null);
 
-  const { socketListen, socket } = useSocket();
-  const load = () => {
+  const { socket } = useSocket();
+  const load = useCallback(() => {
     if (!cityId) return;
     apiGet(`/api/orders?cityId=${cityId}`)
       .then((res) => setTrips(res.data.orders))
       .catch((err) => setError(err.message));
-  };
+  }, [cityId]);
 
   // Live journal: refresh on any order change in the city or for own trips
   useEffect(() => {
     load();
-    socketListen("order:new", load);
-    socketListen("order:status", load);
-    socketListen("order:offer", load);
-    socketListen("order:offersChanged", load);
+    socket.on("order:new", load);
+    socket.on("order:status", load);
+    socket.on("order:offer", load);
+    socket.on("order:offersChanged", load);
     return () => {
       socket.off("order:new", load);
       socket.off("order:status", load);
       socket.off("order:offer", load);
       socket.off("order:offersChanged", load);
     };
-  }, [cityId]);
+  }, [cityId, load, socket]);
 
   const userId = String(me?.user?._id ?? "");
   const mine = trips.filter(
@@ -83,7 +83,7 @@ const TripsList = ({ cityId, me, onOpen }) => {
           >
             <div className="flex items-center justify-between gap-2 text-[1.2rem] text-secondary-text">
                <span><IconText>{asDriver ? "🚕 Вы — водитель" : "🧍 Вы — пассажир"}</IconText></span>
-               <span><IconText>{formatWhen(trip.when)}</IconText></span>
+               <span><IconText>{formatWhen(trip.when, cityTz)}</IconText></span>
             </div>
             {peerName && (
               <div className="text-[1.3rem] text-primary-text">

@@ -45,6 +45,8 @@ const CallModal = ({ call, acceptCall, endCall }) => {
       };
     } else stopRingtone();
     return () => stopRingtone();
+    // The ringtone follows the call state only: call changes identity on every status event
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [call.status, call.whoLabel]);
 
   // Talk timer once the line is active
@@ -55,8 +57,14 @@ const CallModal = ({ call, acceptCall, endCall }) => {
   }, [call.status]);
 
   // Mute / speaker on the live audio tracks
-  useEffect(() => { if (call.audioTracks) call.audioTracks.forEach((t) => { t.enabled = !muted; }); }, [muted, call.audioTracks]);
-  useEffect(() => { if (call.speakerSink) call.speakerSink(speaker); }, [speaker, call.speakerSink]);
+  useEffect(() => {
+    if (call.audioTracks) call.audioTracks.forEach((t) => { t.enabled = !muted; });
+  }, [muted, call.audioTracks]);
+  useEffect(() => {
+    // The sink is a stable callback from useCall: depending on it avoids extra runs
+    if (call.speakerSink) call.speakerSink(speaker);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [speaker, call.speakerSink]);
 
   useEffect(() => {
     if (call.status === "idle") return undefined;
@@ -78,6 +86,8 @@ const CallModal = ({ call, acceptCall, endCall }) => {
       document.removeEventListener("keydown", onKeyDown);
       previousFocus?.focus?.();
     };
+    // The trap follows visibility only; call is a new object on every render
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [call.status]);
 
   if (call.status === "idle") return null;

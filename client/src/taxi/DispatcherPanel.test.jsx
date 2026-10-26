@@ -87,6 +87,9 @@ beforeEach(() => {
   });
   api.apiPatch.mockImplementation((url, body) => {
     placed.push({ method: "PATCH", url, body });
+    if (String(url).endsWith("/timers")) {
+      return Promise.resolve({ data: { settings: { ...dispatchLine, ...body } } });
+    }
     return Promise.resolve({ data: { signal: { _id: "sos-1", status: "RESOLVED" } } });
   });
 });
@@ -155,6 +158,50 @@ test("closing a signal requires a note and sends the outcome", async () => {
       body: { outcome: "resolved", resolution: "Связались с пассажиром" },
     })
   );
+});
+
+test("city timers are asked one by one and saved in a single request", async () => {
+  renderPanel();
+
+  await userEvent.click(await screen.findByRole("button", { name: "Изменить таймеры" }));
+
+  const fillStep = async (title, value) => {
+    const dialog = await screen.findByRole("dialog");
+    expect(within(dialog).getByText(title)).toBeInTheDocument();
+    const input = within(dialog).getByRole("textbox");
+    await userEvent.clear(input);
+    await userEvent.type(input, String(value));
+    await userEvent.click(within(dialog).getByRole("button", { name: /Далее|Сохранить/ }));
+  };
+
+  await fillStep("Бесплатное ожидание", 3);
+  await fillStep("Платное ожидание", 5);
+  await fillStep("Истечение заказа", 600);
+  await fillStep("Предзаказ", 30);
+
+  await waitFor(() =>
+    expect(placed).toContainEqual({
+      method: "PATCH",
+      url: "/api/dispatch/city-1/timers",
+      body: {
+        waitingMinutes: 3,
+        waitingPricePerMin: 5,
+        cascadeTimeouts: { expire: 600 },
+        preorderLeadMinutes: 30,
+      },
+    })
+  );
+});
+
+test("cancelling a timer step saves nothing", async () => {
+  renderPanel();
+
+  await userEvent.click(await screen.findByRole("button", { name: "Изменить таймеры" }));
+  const dialog = await screen.findByRole("dialog");
+  await userEvent.click(within(dialog).getByRole("button", { name: "Отмена" }));
+
+  await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
+  expect(placed).toEqual([]);
 });
 
 test("the dispatch line card shows the city number as a call link", async () => {

@@ -6,12 +6,17 @@ import ShareView from "./taxi/ShareView";
 import reportWebVitals from "./reportWebVitals";
 import { Provider } from "react-redux";
 import appStore from "./store/appStore";
+import { registerServiceWorker } from "./taxi/pushClient";
 
 import * as process from "process";
 
 window.global = window;
 window.process = process;
 window.Buffer = [];
+
+// The service worker is registered before any auth/install gate so the app is
+// installable (PWA) and push-ready from the very first visit.
+registerServiceWorker();
 
 // Public share links render without the app shell
 if (window.location.pathname.startsWith("/share/")) {

@@ -1,5 +1,5 @@
 import {
-  IconAlertTriangle, IconArchive, IconArrowLeft, IconBan, IconBed,
+  IconAlertTriangle, IconArchive, IconArrowLeft, IconBan, IconBed, IconBell,
   IconBolt, IconBookmark, IconBuildingSkyscraper, IconCamera, IconCash,
   IconCheck, IconChevronDown, IconChevronUp, IconCircle, IconCircleCheck,
   IconClipboardList, IconClock, IconClockHour3, IconCoin, IconDoorExit,
@@ -15,7 +15,7 @@ import {
 // One visual family for all interface icons. No car or taxi silhouette is used.
 const icons = {
   alert: IconAlertTriangle, archive: IconArchive, back: IconArrowLeft,
-  ban: IconBan, bed: IconBed, bolt: IconBolt, bookmark: IconBookmark,
+  ban: IconBan, bed: IconBed, bell: IconBell, bolt: IconBolt, bookmark: IconBookmark,
   city: IconBuildingSkyscraper, camera: IconCamera, cash: IconCash,
   check: IconCheck, down: IconChevronDown, up: IconChevronUp,
   circle: IconCircle, completed: IconCircleCheck, orders: IconClipboardList,
@@ -38,7 +38,7 @@ export default function TaxiIcon({ name, size = 20, className = "", style, ...pr
   if (!Icon) return null;
   // Filled glyphs must keep their fill: the global base style sets fill:none
   const solid = /^(starFilled|record|circle|completed)$/.test(name);
-  return <Icon aria-hidden="true" className={`taxi-icon ${solid ? "taxi-icon-solid" : ""} shrink-0 ${className}`} size={size} stroke={2} style={{ width: size, height: size, ...style }} {...props} />;
+  return <Icon data-icon={name} role="img" aria-label={`иконка ${name}`} className={`taxi-icon ${solid ? "taxi-icon-solid" : ""} shrink-0 ${className}`} size={size} stroke={2} style={{ width: size, height: size, ...style }} {...props} />;
 }
 
 const emojiIcons = {
@@ -52,7 +52,7 @@ const emojiIcons = {
   "★": "starFilled", "☆": "star", "💬": "message", "📷": "camera",
   "🎤": "microphone", "🎙": "microphone", "⏺": "record", "➤": "send",
   "←": "back", "⬅️": "back", "🔇": "muted", "🔊": "speaker",
-  "📵": "hangup", "🔗": "share", "🔽": "down", "🔼": "up",
+  "📵": "hangup", "🔗": "share", "🔽": "down", "🔼": "up", "🔔": "bell",
   "🔴": "circle", "⏳": "hourglass", "❌": "close", "🏙": "city",
   "🛣": "road", "✅": "completed", "🔎": "search", "🔖": "bookmark",
   "📍": "pin", "⌛": "hourglass", "✖️": "close", "🚫": "ban",

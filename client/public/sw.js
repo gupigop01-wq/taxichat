@@ -1,7 +1,19 @@
 // Bombila service worker: web push with buttons (Android), tap-to-open on iOS,
 // offline shell caching, and passing the tap text back to the app for TTS.
-const CACHE = "bombila-shell-v3";
-const SHELL = ["/", "/manifest.webmanifest", "/icons/icon-192.png", "/icons/icon-512.png", "/icons/badge-72.png"];
+// The build id comes from the page (see pushClient.registerServiceWorker):
+// a new deploy changes the cache name, so the first navigation after a release
+// replaces every cached asset instead of serving the previous bundle forever.
+let CACHE = "bombila-shell-v3";
+
+self.addEventListener("message", (event) => {
+  const version = event.data?.cacheVersion;
+  if (typeof version === "string" && version && event.data?.type === "cache-version") {
+    CACHE = version;
+  }
+});
+// The shell document itself is never precached: index.html changes on every
+// deploy and a stale copy is what keeps old bundles alive
+const SHELL = ["/manifest.webmanifest", "/icons/icon-192.png", "/icons/icon-512.png", "/icons/badge-white-72.png"];
 
 self.addEventListener("install", (event) => {
   event.waitUntil(
@@ -29,7 +41,7 @@ self.addEventListener("fetch", (event) => {
   if (request.headers.get("accept")?.includes("text/html")) {
     event.respondWith(
       fetch(request)
-        .catch(() => caches.match("/").then((cached) => cached || Response.error()))
+        .catch(() => Response.error())
     );
     return;
   }
@@ -59,7 +71,7 @@ self.addEventListener("push", (event) => {
   const options = {
     body: data.body || "Открой приложение",
     icon: data.icon || "/icons/icon-192.png",
-    badge: "/icons/badge-72.png",
+    badge: "/icons/badge-white-72.png",
     tag: data.tag || data.kind || undefined, // one live card per order/kind
     renotify: Boolean(data.renotify),
     vibrate: data.kind === "offer" ? [120, 60, 120, 60, 120] : [100],
@@ -87,7 +99,7 @@ self.addEventListener("notificationclick", (event) => {
       self.registration.showNotification(title, {
         body,
         icon: "/icons/icon-192.png",
-        badge: "/icons/badge-72.png",
+        badge: "/icons/badge-white-72.png",
         tag: tag || notificationTag(event.notification.tag),
       })
     );
@@ -120,7 +132,7 @@ self.addEventListener("notificationclick", (event) => {
         await self.registration.showNotification("Заказ принят", {
           body: "Водитель готов к поездке. Откройте игру в чате.",
           icon: "/icons/icon-192.png",
-          badge: "/icons/badge-72.png",
+          badge: "/icons/badge-white-72.png",
           tag: event.notification.tag ? `${event.notification.tag}:accepted` : undefined,
         });
       } catch (error) {

@@ -421,7 +421,20 @@ select option {
   margin: 0 auto;
 }
 .taxi-context-row { margin-top: 12px; }
-.taxi-context-row > :first-child { flex: 1; min-width: 0; }
+/* The city keeps the free width; the actions take only what they need */
+.taxi-context-row > :first-child { flex: 1 1 auto; min-width: 0; }
+.taxi-context-actions { display: flex; align-items: center; gap: 8px; flex: 0 0 auto; }
+.taxi-icon-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 42px;
+  min-height: 42px;
+  border: 1px solid rgba(255,255,255,.12);
+  background: #252525;
+  border-radius: 14px;
+  color: #f7c700;
+}
 .taxi-heading { max-width: 1100px; margin: 10px auto 0; font-size: 16px; font-weight: 700; line-height: 1.2; color: #e8e8e8; }
 .taxi-avatar, .taxi-role-trigger, .taxi-role-static {
   display: inline-flex;
@@ -434,7 +447,67 @@ select option {
   border-radius: 14px;
 }
 .taxi-avatar { width: 44px; color: #f7c700; }
-.taxi-role-anchor { position: relative; min-width: 0; max-width: 48%; }
+/* Bell: the single push control, in the header on every screen */
+.taxi-header-tools { display: flex; align-items: center; gap: 8px; flex: 0 0 auto; }
+.taxi-push { position: relative; }
+.taxi-bell:disabled { opacity: 1; }
+.taxi-bell.is-on { border-color: rgba(57, 217, 138, .45); color: #39d98a; }
+.push-hint {
+  position: absolute;
+  top: calc(100% + 10px);
+  right: 0;
+  z-index: 95;
+  display: flex;
+  align-items: flex-end;
+  gap: 2px;
+  width: max-content;
+  max-width: 200px;
+  padding: 0;
+  border: 0;
+  background: none;
+  cursor: pointer;
+  animation: push-hint-in .35s cubic-bezier(.22, 1, .36, 1) both;
+}
+.push-hint:focus-visible { outline: 2px solid #f7c700; outline-offset: 4px; border-radius: 16px; }
+.push-hint-bubble {
+  position: relative;
+  padding: 7px 10px;
+  border-radius: 14px;
+  background: #f7c700;
+  color: #171200;
+  font-size: 12px;
+  font-weight: 700;
+  line-height: 1.25;
+  text-align: left;
+  box-shadow: 0 10px 26px rgba(0, 0, 0, .55);
+}
+.push-hint-bubble::after {
+  content: "";
+  position: absolute;
+  top: -5px;
+  right: 14px;
+  width: 11px;
+  height: 11px;
+  border-radius: 2px;
+  background: #f7c700;
+  transform: rotate(45deg);
+}
+.push-hint-hand {
+  font-size: 26px;
+  line-height: 1;
+  transform-origin: 50% 85%;
+  filter: drop-shadow(0 3px 5px rgba(0, 0, 0, .5));
+  animation: push-hand 1.4s ease-in-out infinite;
+}
+@keyframes push-hint-in {
+  from { opacity: 0; transform: translateY(-6px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+@keyframes push-hand {
+  0%, 100% { transform: translateY(0) rotate(-12deg); }
+  50% { transform: translateY(-8px) rotate(6deg); }
+}
+.taxi-role-anchor { position: relative; min-width: 0; max-width: 44%; }
 .taxi-role-trigger, .taxi-role-static { padding: 0 10px; color: #e6e6e6; font-size: 12px; white-space: nowrap; }
 .taxi-role-trigger > svg:first-child, .taxi-role-static > svg { color: #f7c700; }
 .taxi-role-menu {
@@ -453,6 +526,17 @@ select option {
 .taxi-role-menu button { display: flex; align-items: center; gap: 9px; width: 100%; padding: 10px; border-radius: 11px; text-align: left; font-size: 13px; }
 .taxi-role-menu button.is-current { background: rgba(247,199,0,.13); color: #f7c700; }
 .taxi-content { padding-bottom: calc(77px + env(safe-area-inset-bottom, 0px)); }
+/* Auth screen with the on-screen keyboard open: the scroll container keeps
+   the focused field away from the top edge and the status bar. */
+.auth-scroll {
+  scroll-padding: 1.2rem 0 2rem;
+  -webkit-overflow-scrolling: touch;
+}
+.auth-scroll input,
+.auth-scroll select,
+.auth-scroll textarea {
+  scroll-margin-block: 4.5rem;
+}
 /* Keyboard open: hide bottom rail, passenger subtabs AND the city/role row
    (switching city or role while typing is unnecessary), compact the header.
    All of it frees the layout so the whole composer sits above the keyboard,
@@ -468,7 +552,7 @@ select option {
   right: 0;
   z-index: 30;
   display: grid;
-  grid-template-columns: repeat(3, 1fr);
+  grid-template-columns: repeat(4, minmax(0, 1fr));
   gap: 4px;
   max-width: 1100px;
   margin: 0 auto;
@@ -481,10 +565,31 @@ select option {
   backdrop-filter: blur(22px);
   -webkit-backdrop-filter: blur(22px);
 }
-.taxi-tab { position: relative; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 2px; min-height: 54px; border-radius: 12px; color: #9c9c9c; font-size: 11px; font-weight: 600; }
+.taxi-tab { position: relative; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 2px; min-width: 0; min-height: 54px; border-radius: 12px; color: #9c9c9c; font-size: 11px; font-weight: 600; }
+.taxi-tab > span { max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .taxi-tab.is-active { color: #f7c700; }
 .taxi-tab > * { position: relative; z-index: 1; }
 .taxi-tab-active { position: absolute; inset: 0; z-index: 0; background: rgba(247,199,0,.11); border: 1px solid rgba(247,199,0,.25); border-radius: 12px; }
+.taxi-tab .taxi-tab-alert {
+  position: absolute;
+  top: 3px;
+  right: 10px;
+  z-index: 3;
+  display: grid;
+  place-items: center;
+  width: 17px;
+  height: 17px;
+  max-width: none;
+  overflow: visible;
+  border-radius: 999px;
+  background: #f7c700;
+  color: #111;
+  font-size: 12px;
+  font-weight: 900;
+  line-height: 1;
+  box-shadow: 0 0 0 2px rgba(19,19,19,.97);
+  pointer-events: none;
+}
 .taxi-logout { display: flex; align-items: center; justify-content: center; gap: 8px; width: 100%; min-height: 48px; border: 1px solid rgba(229,72,77,.24); border-radius: 14px; color: #f49a9b; background: rgba(229,72,77,.07); font-weight: 700; }
 .taxi-subnav { border-bottom: 1px solid rgba(255,255,255,.07); }
 .taxi-subtab { flex: 0 0 auto; min-height: 38px; padding: 6px 13px; border: 1px solid rgba(255,255,255,.09); border-radius: 12px; color: #aeaeae; background: #1b1b1b; white-space: nowrap; }
@@ -643,3 +748,32 @@ input[type="range"].time-range::-moz-range-thumb {
   color: #b9b9b9;
 }
 
+
+/* Quick-reply chip: a label that does not fit its pill scrolls inside it */
+.quick-chip-holder {
+  overflow: hidden;
+}
+.quick-chip-track {
+  display: inline-block;
+  white-space: nowrap;
+  will-change: transform;
+}
+.quick-chip-track.is-scrolling {
+  animation-name: quick-chip-scroll;
+  animation-timing-function: ease-in-out;
+  animation-iteration-count: infinite;
+  animation-direction: alternate;
+}
+@keyframes quick-chip-scroll {
+  from { transform: translateX(0); }
+  to { transform: translateX(var(--chip-shift, 0)); }
+}
+/* Motion off: the label stays put and the pill can be swiped instead */
+@media (prefers-reduced-motion: reduce) {
+  .quick-chip-track.is-scrolling {
+    animation: none;
+  }
+  .quick-chip-holder {
+    overflow-x: auto;
+  }
+}

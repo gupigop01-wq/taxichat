@@ -1,19 +1,28 @@
 import { render, screen } from "@testing-library/react";
 import TaxiIcon, { IconText } from "./TaxiIcon";
 
+// Icons come from the tabler set. The logical name travels in aria-label, so
+// the tests can check which glyph was chosen with a plain role query.
 test("replaces the taxi emoji with a route icon, not a car", () => {
-  const { container } = render(<IconText>🚕 Заказы</IconText>);
+  render(<IconText>🚕 Заказы</IconText>);
   expect(screen.getByText(/Заказы/)).toBeInTheDocument();
-  expect(container.textContent).not.toContain("🚕");
-  expect(container.querySelector("svg.tabler-icon-route")).toBeInTheDocument();
+  expect(screen.getByLabelText("иконка route")).toBeInTheDocument();
+  expect(screen.queryByLabelText("иконка road")).not.toBeInTheDocument();
+  expect(screen.queryByText("🚕")).not.toBeInTheDocument();
 });
 
-test("renders road and driver icons with the requested size", () => {
-  const { container } = render(<>
-    <IconText>🧑‍✈️ Иван · 🚗 Машина</IconText>
-    <TaxiIcon name="driver" size={32} />
+test("renders road and driver icons for the emoji text", () => {
+  render(<IconText>🧑‍✈️ Иван · 🚗 Машина</IconText>);
+  expect(screen.getByLabelText("иконка driver")).toBeInTheDocument();
+  expect(screen.getByLabelText("иконка road")).toBeInTheDocument();
+  expect(screen.queryByText(/🚗/)).not.toBeInTheDocument();
+});
+
+test("a known icon name renders a glyph and an unknown name renders nothing", () => {
+  render(<>
+    <TaxiIcon name="cash" />
+    <TaxiIcon name="does-not-exist" />
   </>);
-  expect(container.textContent).not.toContain("🚗");
-  expect(container.querySelector("svg.tabler-icon-road")).toBeInTheDocument();
-  expect(container.querySelector("svg.tabler-icon-steering-wheel[width='32']")).toBeInTheDocument();
+  expect(screen.getByLabelText("иконка cash")).toBeInTheDocument();
+  expect(screen.queryByLabelText("иконка does-not-exist")).not.toBeInTheDocument();
 });

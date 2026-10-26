@@ -82,6 +82,23 @@ test("leaving PUBLISHED removes only that order's stale offers, including city c
   expect(notices()).toHaveLength(0);
 });
 
+test("a driver off the line hears nothing about new work in the city", () => {
+  const { notices, rerender } = renderNotices({ role: "driver", userId: "driver", onLine: false });
+  deliver("order:new", {});
+  expect(notices()).toHaveLength(0);
+  // Back on the line the same broadcast rings once
+  rerender({ role: "driver", userId: "driver", onLine: true });
+  deliver("order:new", {});
+  expect(notices()).toHaveLength(1);
+  expect(notices()[0]).toMatchObject({ message: "Новый заказ в городе", speak: true });
+});
+
+test("staff get the new-order notice without a shift of their own", () => {
+  const { notices } = renderNotices({ role: "dispatcher", userId: "dispatcher", onLine: false });
+  deliver("order:new", {});
+  expect(notices()).toHaveLength(1);
+});
+
 test("current roles and users are read without registering duplicate listeners", () => {
   const { rerender, notices } = renderNotices();
   deliver("order:offer", { orderId: "order", offerId: "offer" });

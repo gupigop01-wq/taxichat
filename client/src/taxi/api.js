@@ -30,8 +30,10 @@ export const apiPost = (url, body = {}) => request(url, { method: "POST", body }
 export const apiPatch = (url, body = {}) => request(url, { method: "PATCH", body });
 export const apiDelete = (url) => request(url, { method: "DELETE" });
 
-// Uploads a file to Cloudinary via the server; returns uploadData
-export const apiUpload = async (file, fileType) => {
+// Uploads a file to Cloudinary via the server; returns uploadData.
+// `context` names the conversation the media belongs to ({ orderId } or
+// { chatId }): the server only stores media for participants.
+export const apiUpload = async (file, fileType, context = {}) => {
   const base64 = await new Promise((resolve, reject) => {
     const reader = new FileReader();
     reader.readAsDataURL(file);
@@ -43,6 +45,7 @@ export const apiUpload = async (file, fileType) => {
       header.replace(/;codecs=[^;,]+/, "")
     ),
     fileType: fileType === "audio" ? "video" : fileType,
+    ...context,
   });
   return res.data.uploadData;
 };

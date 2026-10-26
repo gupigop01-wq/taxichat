@@ -1,6 +1,5 @@
 import { useEffect, useState } from "react";
 import { apiGet } from "./api";
-import DirectChat from "./DirectChat";
 import { IconText } from "./TaxiIcon";
 
 // List of dialogs from direct calls with the peer name, car caption, unread

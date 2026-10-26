@@ -1,8 +1,10 @@
 import { useState } from "react";
 import { apiPost } from "./api";
+import AccountCard from "./AccountCard";
+import DriverCard, { LeaveRole } from "./DriverCard";
+import { useDialog } from "./AppDialog";
 import { cityStatusEmoji } from "./statusLabels";
-import useSocket from "../hooks/useSocket";
-import { enablePushNotifications, disablePushNotifications } from "./pushClient";
+import { withRussianPrefix } from "./phone";
 import TaxiIcon, { IconText } from "./TaxiIcon";
 
 const ROLE_LABELS = {
@@ -23,34 +25,9 @@ const STATUS_LABELS = {
 // "Кабинет": the taxi profile — who the user is in the city, how to become a
 // driver or a dispatcher (concept 1.5)
 const RolesSection = ({ me, cityId, cities, refreshMe, onLogout }) => {
-  const { socketEmit } = useSocket();
-
+  const { confirm } = useDialog();
   const [error, setError] = useState(null);
   const [notice, setNotice] = useState(null);
-  const [pushBusy, setPushBusy] = useState(false);
-  const [pushOn, setPushOn] = useState(() =>
-    typeof Notification !== "undefined" && Notification.permission === "granted" && "PushManager" in window
-  );
-
-  const togglePush = async () => {
-    setPushBusy(true);
-    try {
-      if (pushOn) {
-        await disablePushNotifications();
-        setPushOn(false);
-        setNotice("Пуш-уведомления выключены");
-      } else {
-        const result = await enablePushNotifications();
-        if (!result.ok) throw new Error(result.reason ?? "Push не включился");
-        setPushOn(true);
-        setNotice("Пуш-уведомления включены");
-      }
-    } catch (err) {
-      setError(err.message ?? "Не удалось включить push");
-    } finally {
-      setPushBusy(false);
-    }
-  };
 
 
   const [driverForm, setDriverForm] = useState({
@@ -62,6 +39,8 @@ const RolesSection = ({ me, cityId, cities, refreshMe, onLogout }) => {
 
   });
   const [dispatcherNote, setDispatcherNote] = useState("");
+  // Applications are secondary: the personal card is what people come for
+  const [applicationsOpen, setApplicationsOpen] = useState(false);
 
   const city = cities.find((item) => String(item._id) === String(cityId));
   const memberships = (me?.memberships ?? []).filter(
@@ -84,15 +63,32 @@ const RolesSection = ({ me, cityId, cities, refreshMe, onLogout }) => {
     }
   };
 
+  // One role per city: an application replaces the current role
+  const currentRole = memberships.find(
+    (membership) => membership.status === "ACTIVE" || membership.status === "PENDING"
+  );
+  const currentRoleLabel = currentRole ? ROLE_LABELS[currentRole.role] : null;
+
+  const confirmSwitch = async () => {
+    if (!currentRole || currentRole.role === "driver") return true;
+    return confirm({
+      title: "Сменить роль?",
+      text: `Сейчас вы ${currentRoleLabel?.replace(/^\S+\s/, "") ?? "другая роль"} в этом городе. Заявка заменит её.`,
+      okText: "Сменить роль",
+      danger: true,
+    });
+  };
+
   const submitDriver = async (event) => {
     event.preventDefault();
     setError(null);
+    if (!(await confirmSwitch())) return;
     try {
       await apiPost("/api/memberships", {
         cityId,
         role: "driver",
         displayName: driverForm.displayName,
-        phone: driverForm.phone,
+        phone: withRussianPrefix(driverForm.phone),
         car: {
           color: driverForm.color,
           plate: driverForm.plate,
@@ -110,6 +106,7 @@ const RolesSection = ({ me, cityId, cities, refreshMe, onLogout }) => {
   const submitDispatcher = async (event) => {
     event.preventDefault();
     setError(null);
+    if (!(await confirmSwitch())) return;
     try {
       await apiPost("/api/applications", {
         cityId,
@@ -129,36 +126,28 @@ const RolesSection = ({ me, cityId, cities, refreshMe, onLogout }) => {
       {error && <div className="text-danger text-sm">{error}</div>}
        {notice && <div className="text-success text-sm"><IconText>{notice}</IconText></div>}
 
-      <div className="glass rounded-2xl p-3">
-        <div className="font-semibold mb-1 text-center">
-           <IconText>🔔 Уведомления</IconText>
-        </div>
-        <div className="text-sm text-secondary-text mb-2">
-          Пуши о новых заказах, откликах и статусах поездки. Работают и когда приложение закрыто.
-        </div>
-        <button
-          className={`press px-3 py-2 rounded-xl text-sm font-semibold ${pushOn ? "bg-secondary text-secondary-text" : "btn-accent"}`}
-          onClick={togglePush}
-          disabled={pushBusy}
-          aria-pressed={pushOn}
-        >
-          {pushBusy ? "…"
-            : pushOn ? "Выключить пуш-уведомления"
-            : "🔔 Включить пуш-уведомления"}
-        </button>
-      </div>
+      {/* 1. Кто я: карточка человека, её правят в любой момент */}
+      <AccountCard
+        me={me}
+        refreshMe={refreshMe}
+        onError={setError}
+        onNotice={setNotice}
+      />
 
-      <div className="glass rounded-2xl p-3">
-        <div className="font-semibold mb-1 text-center">
-           <IconText>📍</IconText> {city?.name ?? "—"} <IconText>{cityStatusEmoji(city?.status)}</IconText>
-        </div>
-        <div className="text-sm text-secondary-text">
-           <IconText>Заказать такси можно в городах со статусом ✅ или 🟢.</IconText>
-        </div>
-      </div>
+      {/* 2. Если я водитель — моя анкета и машина */}
+      {driverProfile && (
+        <DriverCard
+          profile={driverProfile}
+          cityId={cityId}
+          refreshMe={refreshMe}
+          onError={setError}
+          onNotice={setNotice}
+        />
+      )}
 
+      {/* 3. Мои роли в городе */}
       <div className="glass rounded-2xl p-3">
-         <h3 className="font-display font-bold mb-2 text-center tracking-wide"><IconText>🪪 Мой кабинет</IconText></h3>
+         <h3 className="font-display font-bold mb-2 text-center tracking-wide"><IconText>🎭 Мои роли</IconText></h3>
         {memberships.length === 0 && (
           <div className="text-sm text-secondary-text mb-2">Пока вы не в такси этого города</div>
         )}
@@ -174,20 +163,52 @@ const RolesSection = ({ me, cityId, cities, refreshMe, onLogout }) => {
          </div>
         {!memberships.some((membership) => membership.role === "passenger") && (
           <button
-            className="btn-accent press px-3 py-1 rounded-xl text-sm font-semibold mt-2"
-            onClick={becomePassenger}
+            className="btn-accent press px-3 py-2 rounded-xl text-sm font-semibold mt-2"
+            onClick={async () => {
+              if (!(await confirmSwitch())) return;
+              becomePassenger();
+            }}
           >
              <IconText>🧍 Заказывать такси</IconText>
           </button>
         )}
-        {driverProfile && (
-          <div className="text-sm text-secondary-text mt-2">
-             <IconText>🚗</IconText> {driverProfile.carCaption} · <IconText>📞</IconText> {driverProfile.phone}
-          </div>
-        )}
       </div>
 
-       {!driverMembership && (
+      <LeaveRole
+        memberships={memberships}
+        refreshMe={refreshMe}
+        onError={setError}
+        onNotice={setNotice}
+        onConfirm={confirm}
+      />
+
+      <div className="glass rounded-2xl p-3">
+        <div className="font-semibold mb-1 text-center">
+           <IconText>📍</IconText> {city?.name ?? "—"} <IconText>{cityStatusEmoji(city?.status)}</IconText>
+        </div>
+        <div className="text-sm text-secondary-text">
+           <IconText>Заказать такси можно в городах со статусом ✅ или 🟢.</IconText>
+        </div>
+      </div>
+
+      <div className="glass rounded-2xl p-3 space-y-2">
+        <div className="flex items-center justify-between gap-2">
+          <h3 className="font-display font-bold tracking-wide"><IconText>📨 Заявки и дополнительные роли</IconText></h3>
+          <button
+            className="press bg-secondary border border-secondary-text/30 px-3 py-1.5 rounded-xl text-sm font-semibold"
+            onClick={() => setApplicationsOpen((open) => !open)}
+            aria-expanded={applicationsOpen}
+          >
+            {applicationsOpen ? "Свернуть" : "Открыть"}
+          </button>
+        </div>
+        <div className="text-xs text-secondary-text">
+          Необязательно. В городе у человека одна роль: новая заявка заменит{" "}
+          {currentRoleLabel ? `вашу текущую (${currentRoleLabel})` : "текущую роль"}.
+        </div>
+      </div>
+
+      {applicationsOpen && !driverMembership && (
         <form className="glass rounded-2xl p-3 space-y-2" onSubmit={submitDriver}>
            <h3 className="font-display font-bold text-center tracking-wide"><IconText>🚕 Стать водителем</IconText></h3>
           <input
@@ -232,7 +253,7 @@ const RolesSection = ({ me, cityId, cities, refreshMe, onLogout }) => {
         </form>
       )}
 
-      {!memberships.some((membership) => membership.role === "dispatcher") && (
+      {applicationsOpen && !memberships.some((membership) => membership.role === "dispatcher") && (
         <form className="glass rounded-2xl p-3 space-y-2" onSubmit={submitDispatcher}>
            <h3 className="font-display font-bold text-center tracking-wide"><IconText>🎧 Стать диспетчером</IconText></h3>
           <textarea

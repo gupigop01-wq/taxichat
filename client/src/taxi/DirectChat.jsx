@@ -1,27 +1,29 @@
-import { useEffect, useRef, useState } from "react";
-import { useReactMediaRecorder } from "react-media-recorder";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { apiGet, apiPost, apiUpload } from "./api";
 import useSocket from "../hooks/useSocket";
 import { useDialog } from "./AppDialog";
 import { IconText } from "./TaxiIcon";
+import useVoiceNote from "./useVoiceNote";
 
 // Direct dialog between a passenger and a driver after a call (concept 1.6)
 const DirectChat = ({ chatId, me, onBack }) => {
   const { confirm } = useDialog();
-  const { socketListen, socket } = useSocket();
+  const { socket } = useSocket();
   const [chat, setChat] = useState(null);
   const [messages, setMessages] = useState([]);
   const [text, setText] = useState("");
   const [error, setError] = useState(null);
   const [blocked, setBlocked] = useState(false);
-  const load = async () => {
+  const [uploading, setUploading] = useState(false);
+
+  const load = useCallback(async () => {
     try {
       const history = await apiGet(`/api/chats/${chatId}/messages`);
       setMessages(history.data.messages);
     } catch (err) {
       setError(err.message);
     }
-  };
+  }, [chatId]);
 
   useEffect(() => {
     apiGet("/api/chats/my")
@@ -37,13 +39,13 @@ const DirectChat = ({ chatId, me, onBack }) => {
       load();
       apiPost(`/api/chats/${chatId}/read`, {}).catch(() => {});
     };
-    socketListen("chat:message", onChanged);
+    socket.on("chat:message", onChanged);
     return () => {
       socket.off("chat:message", onChanged);
     };
-  }, [chatId]);
+  }, [chatId, load, socket]);
 
-  const send = async (payload) => {
+  const send = useCallback(async (payload) => {
     try {
       await apiPost(`/api/chats/${chatId}/messages`, payload);
       setText("");
@@ -51,11 +53,25 @@ const DirectChat = ({ chatId, me, onBack }) => {
     } catch (err) {
       setError(err.message);
     }
-  };
+  }, [chatId, load]);
+
+  const voice = useVoiceNote({
+    // No context while blocked: the hook skips the upload altogether
+    context: blocked ? null : { chatId },
+    onBlob: (uploadData, seconds) => {
+      // The block may have landed while the recording was in flight
+      if (blocked) return undefined;
+      return send({ kind: "voice", voiceNoteUrl: uploadData.secure_url, voiceNoteDuration: seconds });
+    },
+  });
+  // A recording error is shown in the same banner as the send errors
+  useEffect(() => {
+    if (voice.error) setError(voice.error);
+  }, [voice.error]);
 
   const blockPeer = async () => {
     if (!chat?.peer?._id) return;
-     if (!(await confirm({ title: "Заблокировать собеседника?", text: "Звонки и диалоги станут недоступны.", okText: "Заблокировать", danger: true }))) return;
+    if (!(await confirm({ title: "Заблокировать собеседника?", text: "Звонки и диалоги станут недоступны.", okText: "Заблокировать", danger: true }))) return;
     try {
       await apiPost("/api/blocks", { userId: String(chat.peer._id) });
       setBlocked(true);
@@ -66,54 +82,17 @@ const DirectChat = ({ chatId, me, onBack }) => {
   };
 
   const fileInputRef = useRef();
-  const [uploading, setUploading] = useState(false);
-  const [recording, setRecording] = useState(false);
-  const [recordSeconds, setRecordSeconds] = useState(0);
-  const recordTimerRef = useRef();
-
-  const { startRecording, stopRecording } = useReactMediaRecorder({
-    audio: true,
-    onStop: async (_, blob) => {
-      try {
-        setUploading(true);
-        const uploadData = await apiUpload(blob, "audio");
-        await send({
-          kind: "voice",
-          voiceNoteUrl: uploadData.secure_url,
-          voiceNoteDuration: Math.max(1, recordSeconds),
-        });
-      } catch (err) {
-        setError(err.message);
-      } finally {
-        setUploading(false);
-        setRecording(false);
-        setRecordSeconds(0);
-      }
-    },
-  });
-
-  const toggleRecording = () => {
-    if (recording) {
-      clearInterval(recordTimerRef.current);
-      stopRecording();
-    } else {
-      setRecordSeconds(0);
-      recordTimerRef.current = setInterval(
-        () => setRecordSeconds((seconds) => seconds + 1),
-        1000
-      );
-      setRecording(true);
-      startRecording();
-    }
-  };
+  const recording = voice.recording;
+  const recordSeconds = voice.recordSeconds;
+  const busy = uploading || voice.uploading;
 
   const onPickPhoto = async (event) => {
     const file = event.target.files?.[0];
     event.target.value = "";
-    if (!file) return;
+    if (!file || blocked) return;
     try {
       setUploading(true);
-      const uploadData = await apiUpload(file, "image");
+      const uploadData = await apiUpload(file, "image", { chatId });
       await send({ kind: "photo", imageUrl: uploadData.secure_url });
     } catch (err) {
       setError(err.message);
@@ -198,21 +177,21 @@ const DirectChat = ({ chatId, me, onBack }) => {
         className="flex gap-2 p-3 border-t border-secondary-text/20 min-w-0"
         onSubmit={(event) => {
           event.preventDefault();
-            if (blocked) return;
-            if (text.trim() && !uploading && !recording) send({ body: text });
+          if (blocked) return;
+          if (text.trim() && !busy && !recording) send({ body: text });
         }}
       >
         <input ref={fileInputRef} type="file" accept="image/*" hidden aria-label="Выбрать фото" onChange={onPickPhoto} />
-        <button type="button" aria-label="Прикрепить фото" disabled={blocked || uploading || recording} className="px-2 text-lg shrink-0" onClick={() => fileInputRef.current?.click()}>
+        <button type="button" aria-label="Прикрепить фото" disabled={blocked || busy || recording} className="px-2 text-lg shrink-0" onClick={() => fileInputRef.current?.click()}>
            <IconText>📷</IconText>
         </button>
         <button
           type="button"
           aria-label={recording ? "Остановить запись голосового сообщения" : "Записать голосовое сообщение"}
           aria-pressed={recording}
-          disabled={blocked || uploading}
+          disabled={blocked || busy}
           className={`px-2 text-lg shrink-0 ${recording ? "text-danger animate-pulse" : ""}`}
-          onClick={toggleRecording}
+          onClick={voice.toggle}
         >
            <IconText>{recording ? `⏺ ${recordSeconds}с` : "🎤"}</IconText>
         </button>
@@ -221,14 +200,13 @@ const DirectChat = ({ chatId, me, onBack }) => {
           className="flex-1 min-w-0 bg-[#0d0d0d] text-white placeholder:text-secondary-text border border-secondary-text/30 rounded-2xl px-3 sm:px-4 py-2.5 text-[1.5rem] focus:border-accent focus:outline-none transition-colors"
           value={text}
           onChange={(event) => setText(event.target.value)}
-          placeholder={blocked ? "Диалог заблокирован" : uploading ? "Загрузка..." : "Сообщение..."}
-          disabled={blocked || uploading || recording}
+          placeholder={blocked ? "Диалог заблокирован" : busy ? "Загрузка..." : "Сообщение..."}
+          disabled={blocked || busy || recording}
         />
-         <button className="press btn-accent px-3 sm:px-4 rounded-2xl font-display font-bold shrink-0" type="submit" onMouseDown={(event) => event.preventDefault()} aria-label="Отправить сообщение" disabled={blocked || !text.trim() || uploading || recording}><IconText>➤</IconText></button>
+         <button className="press btn-accent px-3 sm:px-4 rounded-2xl font-display font-bold shrink-0" type="submit" onMouseDown={(event) => event.preventDefault()} aria-label="Отправить сообщение" disabled={blocked || !text.trim() || busy || recording}><IconText>➤</IconText></button>
       </form>
     </div>
   );
 };
 
 export default DirectChat;
-

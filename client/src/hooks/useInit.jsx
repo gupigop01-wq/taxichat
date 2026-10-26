@@ -1,16 +1,10 @@
 import { useEffect } from "react";
-import useSocket from "./useSocket";
-import { useSelector, useDispatch } from "react-redux";
-import { contactsActions } from "../store/contactsSlice";
-import useFetch from "./useFetch";
-import { chatActions } from "../store/chatSlice";
-import { modalActions } from "../store/modalSlice";
-import { authActions } from "../store/authSlice";
+import { useSelector } from "react-redux";
 
+// Minimal boot hook of the app shell: theme and the authenticated flag.
+// Contacts and the legacy contact-call flow were removed with the legacy
+// messenger client; the taxi workspace initializes itself in useTaxi.
 const useInit = () => {
-  // useSocketHook
-  const { socketEmit, socketListen, userId, socket } = useSocket();
-
   // Set app theme
   useEffect(() => {
     const initialMode = JSON.parse(localStorage.getItem("darkMode"));
@@ -21,96 +15,6 @@ const useInit = () => {
 
   // Get logged in state
   const loggedIn = useSelector((state) => state.authReducer.loggedIn);
-
-  const chatList = useSelector((state) => state.chatListReducer);
-
-  const dispatch = useDispatch();
-
-  // Fetch user contacts
-  const { reqFn: fetchContacts } = useFetch(
-    { method: "GET", url: "/contacts" },
-    (data) => {
-      dispatch(contactsActions.setContacts(data.data.contacts));
-    }
-  );
-
-  // Moment user logs in, fetch contacts
-  useEffect(() => {
-    if (loggedIn) {
-      fetchContacts();
-    }
-  }, [loggedIn]);
-
-  // On getting user details
-  useEffect(() => {
-    if (userId) {
-      // Connect socket if disconnected
-      if (socket.disconnected) {
-        socket.connect();
-      }
-      // Announce logged in status
-      socketEmit("user:online", userId);
-
-      // Listen to online event from other users
-      socketListen("user:online", (userId) => {
-        const payload = {
-          id: userId,
-          status: {
-            online: true,
-          },
-        };
-        // Set contact online status
-        dispatch(contactsActions.setContactOnlineStatus(payload));
-        // Set chatroom online status
-        dispatch(chatActions.updateChatProfile({ payload }));
-      });
-
-      // Listen to offline event from other users
-      socketListen("user:offline", ({ userId, time }) => {
-        const payload = {
-          id: userId,
-          status: {
-            online: false,
-            lastSeen: time,
-          },
-        };
-
-        dispatch(contactsActions.setContactOnlineStatus(payload));
-        dispatch(chatActions.updateChatProfile({ payload }));
-      });
-    }
-  }, [userId]);
-
-  useEffect(() => {
-    // Listen to call request
-    socketListen(
-      "user:callRequest",
-      ({ chatRoomId, signalData, userId, callType }, acknowledgeCall) => {
-        dispatch(
-          modalActions.openModal({
-            type: `${callType}CallModal`,
-            payload: {
-              partnerProfile: chatList.find(
-                (chat) => chat.chatRoomId === chatRoomId
-              ).profile,
-              callDetail: {
-                caller: false,
-                chatRoomId,
-                callerSignal: signalData,
-                callerId: userId,
-              },
-            },
-            positions: {},
-          })
-        );
-        acknowledgeCall();
-      }
-    );
-
-    return () => {
-      socket.off("user:callRequest");
-    };
-  }, [chatList]);
 
   return {
     loggedIn,

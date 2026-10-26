@@ -1,4 +1,3 @@
-import { useSelector } from "react-redux";
 import { io } from "socket.io-client";
 
 const socket = io();
@@ -24,8 +23,6 @@ export const reconnectSocket = () => {
 };
 
 const useSocket = () => {
-  const userId = useSelector((state) => state.userReducer.user._id);
-
   const socketEmit = (action, payload, fn) => {
     socket.emit(action, payload, fn);
   };
@@ -34,7 +31,7 @@ const useSocket = () => {
     socket.on(action, fn);
   };
 
-  return { socketEmit, socketListen, userId, socket };
+  return { socketEmit, socketListen, socket };
 };
 
 export default useSocket;

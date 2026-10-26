@@ -14,7 +14,21 @@ const urlBase64ToUint8Array = (base64String) => {
 export const registerServiceWorker = async () => {
   if (!("serviceWorker" in navigator)) return null;
   try {
-    return await navigator.serviceWorker.register("/sw.js");
+    const registration = await navigator.serviceWorker.register("/sw.js", { updateViaCache: "none" });
+    // Hand the build id to the worker: a release changes the cache name, so the
+    // next activation drops every asset of the previous bundle
+    const version = process.env.REACT_APP_BUILD_ID || document.querySelector('script[src*="main."]')?.src.split("main.")[1]?.split(".")[0];
+    if (version) {
+      const tell = (worker) => worker?.postMessage({ type: "cache-version", cacheVersion: `bombila-shell-${version}` });
+      tell(registration.active);
+      registration.addEventListener("updatefound", () => {
+        const worker = registration.installing;
+        worker?.addEventListener("statechange", () => {
+          if (worker.state === "activated") tell(worker);
+        });
+      });
+    }
+    return registration;
   } catch (error) {
     console.warn("Service worker registration failed:", error.message);
     return null;
@@ -36,7 +50,7 @@ export const enablePushNotifications = async () => {
       ok: false,
       reason:
         permission === "denied"
-          ? "Уведомления для сайта заблокированы. Откройте меню Chrome → «Настройки сайтов» → «Уведомления» и разрешите их."
+          ? "Уведомления заблокированы. Включите их в настройках телефона: Настройки → Приложения → Бомбила → Уведомления."
           : "Разрешение не выдано",
     };
   }
@@ -51,6 +65,8 @@ export const enablePushNotifications = async () => {
   return { ok: true };
 };
 
+// Drop the push subscription and forget it on the server, so the phone stops
+// receiving order cards. Safe to call when nothing is subscribed.
 export const disablePushNotifications = async () => {
   if (!("serviceWorker" in navigator) || !("PushManager" in window)) return;
   const registration = await navigator.serviceWorker.ready;

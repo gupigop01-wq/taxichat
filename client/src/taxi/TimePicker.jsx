@@ -1,24 +1,42 @@
 import { useEffect, useId, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { IconText } from "./TaxiIcon";
+import { zonedWallToUtc, cityTimeZone } from "./statusLabels";
 
 // Выбор времени «на время»: слайдеры часов (0–23) и минут (0–59) и полоса дат
-// на две недели вперёд. Крупное табло, всё в стиле проекта.
-// Значение отдаётся в формате datetime-local (YYYY-MM-DDTHH:mm).
+// на две недели вперёд. Табло показывает часы ГОРОДА, а не устройства: Date
+// внутри хранит настенное время в UTC-полях, поэтому getUTC* — это и есть
+// выбранные человеком часы. Значение отдаётся как datetime-local.
 const pad = (v) => String(v).padStart(2, "0");
 
 const toLocalValue = (date) =>
-  `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}T${pad(
-    date.getHours()
-  )}:${pad(date.getMinutes())}`;
+  `${date.getUTCFullYear()}-${pad(date.getUTCMonth() + 1)}-${pad(
+    date.getUTCDate()
+  )}T${pad(date.getUTCHours())}:${pad(date.getUTCMinutes())}`;
 
 const parseValue = (value) => {
-  const date = new Date(value);
-  return Number.isNaN(date.getTime()) ? new Date(Date.now() + 3600000) : date;
+  const match = String(value ?? "").match(
+    /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2})/
+  );
+  if (!match) return new Date(Date.now() + 3600000);
+  return new Date(
+    Date.UTC(Number(match[1]), Number(match[2]) - 1, Number(match[3]), Number(match[4]), Number(match[5]))
+  );
 };
 
-const relativeLabel = (date) => {
-  const diff = Math.round((date.getTime() - Date.now()) / 60000);
+const cityToday = (tz) => {
+  const iso = new Intl.DateTimeFormat("en-CA", {
+    timeZone: cityTimeZone(tz),
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  }).format(new Date());
+  return new Date(`${iso}T00:00:00Z`);
+};
+
+const relativeLabel = (date, tz) => {
+  const at = zonedWallToUtc(toLocalValue(date), tz);
+  const diff = Math.round(((at?.getTime() ?? 0) - Date.now()) / 60000);
   if (diff <= 0) return "сейчас";
   if (diff < 60) return `через ${diff} мин`;
   const hours = Math.floor(diff / 60);
@@ -27,15 +45,17 @@ const relativeLabel = (date) => {
 };
 
 const isSameDay = (a, b) =>
-  a.getFullYear() === b.getFullYear() && a.getMonth() === b.getMonth() && a.getDate() === b.getDate();
+  a.getUTCFullYear() === b.getUTCFullYear() &&
+  a.getUTCMonth() === b.getUTCMonth() &&
+  a.getUTCDate() === b.getUTCDate();
 
 const dayLabel = (date, index) => {
   if (index === 0) return "Сегодня";
   if (index === 1) return "Завтра";
-  return date.toLocaleDateString("ru-RU", { day: "numeric", month: "short" });
+  return date.toLocaleDateString("ru-RU", { day: "numeric", month: "short", timeZone: "UTC" });
 };
 
-const TimePicker = ({ value, onChange, open, onClose, title }) => {
+const TimePicker = ({ value, onChange, open, onClose, title, tz }) => {
   const [cursor, setCursor] = useState(() => parseValue(value));
   const panelRef = useRef(null);
   const closeRef = useRef(null);
@@ -75,28 +95,28 @@ const TimePicker = ({ value, onChange, open, onClose, title }) => {
 
   if (!open) return null;
 
+  const today = cityToday(tz);
   const days = Array.from({ length: 14 }, (_, i) => {
-    const d = new Date();
-    d.setHours(0, 0, 0, 0);
-    d.setDate(d.getDate() + i);
+    const d = new Date(today);
+    d.setUTCDate(d.getUTCDate() + i);
     return d;
   });
 
   const setDay = (day) => {
     const next = new Date(cursor);
-    next.setFullYear(day.getFullYear(), day.getMonth(), day.getDate());
+    next.setUTCFullYear(day.getUTCFullYear(), day.getUTCMonth(), day.getUTCDate());
     setCursor(next);
   };
 
   const setHour = (hour) => {
     const next = new Date(cursor);
-    next.setHours(hour);
+    next.setUTCHours(hour);
     setCursor(next);
   };
 
   const setMinute = (minute) => {
     const next = new Date(cursor);
-    next.setMinutes(minute);
+    next.setUTCMinutes(minute);
     setCursor(next);
   };
 
@@ -125,12 +145,17 @@ const TimePicker = ({ value, onChange, open, onClose, title }) => {
 
         <div className="rounded-2xl bg-[#0d0d0d] border border-secondary-text/25 py-3 text-center">
           <div className="font-display font-extrabold text-[4rem] leading-none tracking-wide">
-            {pad(cursor.getHours())}
+            {pad(cursor.getUTCHours())}
             <span className="text-secondary-text">:</span>
-            {pad(cursor.getMinutes())}
+            {pad(cursor.getUTCMinutes())}
           </div>
           <div className="mt-1 text-[1.3rem] text-cta-icon font-semibold">
-            {cursor.toLocaleDateString("ru-RU", { day: "numeric", month: "long" })} · {relativeLabel(cursor)}
+            {cursor.toLocaleDateString("ru-RU", {
+              day: "numeric",
+              month: "long",
+              timeZone: "UTC",
+            })}{" "}
+            · {relativeLabel(cursor, tz)}
           </div>
         </div>
 
@@ -142,7 +167,12 @@ const TimePicker = ({ value, onChange, open, onClose, title }) => {
                 key={day.toISOString()}
                 type="button"
                 aria-pressed={selected}
-                aria-label={day.toLocaleDateString("ru-RU", { weekday: "long", day: "numeric", month: "long" })}
+                aria-label={day.toLocaleDateString("ru-RU", {
+                  weekday: "long",
+                  day: "numeric",
+                  month: "long",
+                  timeZone: "UTC",
+                })}
                 className={`press shrink-0 px-3 py-2 rounded-2xl text-[1.3rem] ${
                   selected ? "btn-accent font-bold" : "glass text-secondary-text"
                 }`}
@@ -158,7 +188,7 @@ const TimePicker = ({ value, onChange, open, onClose, title }) => {
           <div>
             <div className="flex items-center justify-between text-[1.3rem] text-secondary-text mb-1">
                <label htmlFor={hourId}><IconText>🕐 Час</IconText></label>
-              <span className="text-cta-icon font-bold text-[1.5rem]">{pad(cursor.getHours())}</span>
+              <span className="text-cta-icon font-bold text-[1.5rem]">{pad(cursor.getUTCHours())}</span>
             </div>
             <input
               type="range"
@@ -166,7 +196,7 @@ const TimePicker = ({ value, onChange, open, onClose, title }) => {
               min="0"
               max="23"
               step="1"
-              value={cursor.getHours()}
+              value={cursor.getUTCHours()}
               onChange={(event) => setHour(Number(event.target.value))}
               className="time-range w-full"
             />
@@ -175,7 +205,7 @@ const TimePicker = ({ value, onChange, open, onClose, title }) => {
           <div>
             <div className="flex items-center justify-between text-[1.3rem] text-secondary-text mb-1">
                <label htmlFor={minuteId}><IconText>⏱ Минуты</IconText></label>
-              <span className="text-cta-icon font-bold text-[1.5rem]">{pad(cursor.getMinutes())}</span>
+              <span className="text-cta-icon font-bold text-[1.5rem]">{pad(cursor.getUTCMinutes())}</span>
             </div>
             <input
               type="range"
@@ -183,7 +213,7 @@ const TimePicker = ({ value, onChange, open, onClose, title }) => {
               min="0"
               max="59"
               step="1"
-              value={cursor.getMinutes()}
+              value={cursor.getUTCMinutes()}
               onChange={(event) => setMinute(Number(event.target.value))}
               className="time-range w-full"
             />

@@ -1,20 +1,21 @@
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { useDispatch } from "react-redux";
 import { notificationActions } from "../store/notificationSlice";
-import { useReactMediaRecorder } from "react-media-recorder";
 import { apiGet, apiPost, apiUpload } from "./api";
 import useSocket from "../hooks/useSocket";
 import { statusBadge, formatWhen } from "./statusLabels";
 import Marquee from "./Marquee";
 import TaxiIcon, { IconText } from "./TaxiIcon";
 import { useDialog } from "./AppDialog";
+import useVoiceNote from "./useVoiceNote";
+import WaitingInfo from "./WaitingInfo";
 
 // Chat of a single order: bot card, system messages, quick action buttons,
 // offers, SOS and the trip rating (concept 1.7)
-const OrderChat = ({ orderId, me, onBack, startCall }) => {
+const OrderChat = ({ orderId, me, cityTz, onBack, startCall }) => {
   const { ask, confirm } = useDialog();
   const dispatch = useDispatch();
-  const { socketListen, socketEmit, socket } = useSocket();
+  const { socket } = useSocket();
   const [order, setOrder] = useState(null);
   const [messages, setMessages] = useState([]);
   const [offers, setOffers] = useState([]);
@@ -26,33 +27,72 @@ const OrderChat = ({ orderId, me, onBack, startCall }) => {
 
   // Все хуки объявляются до ранних return, иначе число хуков меняется при загрузке заказа
   const fileInputRef = useRef();
+  const messageRef = useRef();
   const [armed, setArmed] = useState(false);
   const [uploading, setUploading] = useState(false);
-  const [recording, setRecording] = useState(false);
-  const [recordSeconds, setRecordSeconds] = useState(0);
-  const recordTimerRef = useRef();
 
-  const { startRecording, stopRecording } = useReactMediaRecorder({
-    audio: true,
-    onStop: async (_, blob) => {
-      try {
-        setUploading(true);
-        const uploadData = await apiUpload(blob, "audio");
-        await apiPost(`/api/orders/${orderId}/messages`, {
-          kind: "voice",
-          voiceNoteUrl: uploadData.secure_url,
-          voiceNoteDuration: Math.max(1, recordSeconds),
-        });
-        load();
-      } catch (err) {
-        setError(err.message);
-      } finally {
-        setUploading(false);
-        setRecording(false);
-        setRecordSeconds(0);
+  // Status events fan out to several subscribers; parallel refreshes can
+  // resolve out of order and overwrite fresh state with a stale snapshot.
+  // Only the latest load() is allowed to commit its result.
+  const loadSeq = useRef(0);
+  const load = useCallback(async () => {
+    const seq = ++loadSeq.current;
+    try {
+      const res = await apiGet(`/api/orders/${orderId}`);
+      if (seq !== loadSeq.current) return;
+      setOrder(res.data.order);
+      if (res.data.order.myRating) {
+        setStars(res.data.order.myRating);
+        setRated(true);
       }
+      const history = await apiGet(`/api/orders/${orderId}/messages`);
+      if (seq !== loadSeq.current) return;
+      setMessages(history.data.messages);
+      const offersRes = await apiGet(`/api/orders/${orderId}/offers`);
+      if (seq !== loadSeq.current) return;
+      setOffers(offersRes.data.offers);
+    } catch (err) {
+      if (seq === loadSeq.current) setError(err.message);
+    }
+  }, [orderId]);
+
+  const sendVoice = useCallback(
+    async (uploadData, seconds) => {
+      await apiPost(`/api/orders/${orderId}/messages`, {
+        kind: "voice",
+        voiceNoteUrl: uploadData.secure_url,
+        voiceNoteDuration: seconds,
+      });
+      load();
     },
+    [load, orderId]
+  );
+
+  const voice = useVoiceNote({
+    context: { orderId },
+    onBlob: sendVoice,
   });
+  useEffect(() => {
+    if (voice.error) setError(voice.error);
+  }, [voice.error]);
+
+  // rows={1} textareas do not grow on their own; the CSS max-height caps the
+  // growth at roughly five lines and the overflow then scrolls inside the field.
+  // An empty field keeps its one-line height instead of stretching to the
+  // wrapped placeholder.
+  useEffect(() => {
+    const field = messageRef.current;
+    if (!field) return;
+    if (!text) {
+      field.style.height = "";
+      return;
+    }
+    field.style.height = "auto";
+    field.style.height = `${field.scrollHeight}px`;
+  }, [text]);
+  const recording = voice.recording;
+  const recordSeconds = voice.recordSeconds;
+  const busy = uploading || voice.uploading;
 
   const isParticipant =
     String(order?.passengerId) === String(me?.user?._id) ||
@@ -76,30 +116,12 @@ const OrderChat = ({ orderId, me, onBack, startCall }) => {
     };
   }, [orderId]);
 
-  // Status events fan out to several subscribers; parallel refreshes can
-  // resolve out of order and overwrite fresh state with a stale snapshot.
-  // Only the latest load() is allowed to commit its result.
-  const loadSeq = useRef(0);
-  const load = async () => {
-    const seq = ++loadSeq.current;
-    try {
-      const res = await apiGet(`/api/orders/${orderId}`);
-      if (seq !== loadSeq.current) return;
-      setOrder(res.data.order);
-      if (res.data.order.myRating) {
-        setStars(res.data.order.myRating);
-        setRated(true);
-      }
-      const history = await apiGet(`/api/orders/${orderId}/messages`);
-      if (seq !== loadSeq.current) return;
-      setMessages(history.data.messages);
-      const offersRes = await apiGet(`/api/orders/${orderId}/offers`);
-      if (seq !== loadSeq.current) return;
-      setOffers(offersRes.data.offers);
-    } catch (err) {
-      if (seq === loadSeq.current) setError(err.message);
-    }
-  };
+  useEffect(() => {
+    window.__bombilaOpenOrderId = String(orderId);
+    return () => {
+      if (window.__bombilaOpenOrderId === String(orderId)) window.__bombilaOpenOrderId = null;
+    };
+  }, [orderId]);
 
   useEffect(() => {
     load();
@@ -109,9 +131,9 @@ const OrderChat = ({ orderId, me, onBack, startCall }) => {
       load();
       apiPost(`/api/orders/${orderId}/read`, {}).catch(() => {});
     };
-    socketListen("chat:message", onChanged);
-    socketListen("order:status", onChanged);
-    socketListen("order:offersChanged", onChanged);
+    socket.on("chat:message", onChanged);
+    socket.on("order:status", onChanged);
+    socket.on("order:offersChanged", onChanged);
 
     // Join the live order room. The server refuses non-participants, so the
     // join is retried after the driver is assigned (order:status) and after
@@ -128,7 +150,7 @@ const OrderChat = ({ orderId, me, onBack, startCall }) => {
       socket.off("order:status", joinRoom);
       socket.emit("order:leave", { orderId });
     };
-  }, [orderId]);
+  }, [orderId, load, socket]);
 
   const send = async (body) => {
     if (!body.trim()) return;
@@ -177,6 +199,26 @@ const OrderChat = ({ orderId, me, onBack, startCall }) => {
             type: "info",
           })
         );
+      } else if (action === "resolve_complete" || action === "resolve_cancel") {
+        const done = action === "resolve_complete";
+        const ok = await confirm({
+          title: done ? "✅ Поездка состоялась?" : "❌ Отменить заказ по спору?",
+          text: done
+            ? "Заказ будет закрыт как выполненный, участники получат уведомление"
+            : "Заказ будет отменён, участники получат уведомление",
+          okText: done ? "Поездка состоялась" : "Отменить заказ",
+          danger: !done,
+        });
+        if (!ok) return;
+        await apiPost(`/api/orders/${orderId}/resolve`, {
+          outcome: done ? "complete" : "cancel",
+        });
+        dispatch(
+          notificationActions.addNotification({
+            message: done ? "Спор закрыт: поездка состоялась" : "Спор закрыт: заказ отменён",
+            type: "success",
+          })
+        );
       } else if (action === "dispute") {
         const reason = await ask({ title: "⚠️ Опишите проблему", placeholder: "Что пошло не так", okText: "Открыть спор" });
         if (!reason) return;
@@ -222,28 +264,13 @@ const OrderChat = ({ orderId, me, onBack, startCall }) => {
     }
   };
 
-  const toggleRecording = () => {
-    if (recording) {
-      clearInterval(recordTimerRef.current);
-      stopRecording();
-    } else {
-      setRecordSeconds(0);
-      recordTimerRef.current = setInterval(
-        () => setRecordSeconds((seconds) => seconds + 1),
-        1000
-      );
-      setRecording(true);
-      startRecording();
-    }
-  };
-
   const onPickPhoto = async (event) => {
     const file = event.target.files?.[0];
     event.target.value = "";
     if (!file) return;
     try {
       setUploading(true);
-      const uploadData = await apiUpload(file, "image");
+      const uploadData = await apiUpload(file, "image", { orderId });
       await apiPost(`/api/orders/${orderId}/messages`, {
         kind: "photo",
         imageUrl: uploadData.secure_url,
@@ -307,17 +334,24 @@ const OrderChat = ({ orderId, me, onBack, startCall }) => {
   };
 
   if (error && !order) {
+    // 403 here means the viewer is not a participant yet (an offer, not an
+    // assignment): say so instead of leaving a bare server message
+    const refused = /доступ/i.test(error);
     return (
-      <div className="p-6 text-danger">
-        {error}
-        <button className="btn-back" onClick={onBack}><TaxiIcon name="back" /> Назад</button>
+      <div className="p-6 space-y-3 text-center">
+        <div className="text-danger">
+          {refused ? "Чат откроется после назначения: пока вы не участник этого заказа" : error}
+        </div>
+        <button className="btn-back mx-auto" onClick={onBack}><TaxiIcon name="back" /> Назад</button>
       </div>
     );
   }
   if (!order) return <div className="p-6">Загрузка...</div>;
 
   const CALLABLE = ["ASSIGNED", "ARRIVING", "WAITING", "IN_RIDE"];
-  const canRate = order.status === "COMPLETED" && !rated;
+  // The dispatcher dials through the city line, so in-app calls are for the
+  // two participants only
+  const canCallPeer = isParticipant && otherId;
   const peerLine = myRole === "passenger" && order.driver
     ? `${order.driver.displayName}${order.driver.carCaption ? ` · ${order.driver.carCaption}` : ""}`
     : myRole === "driver" && order.passenger?.name
@@ -337,20 +371,21 @@ const OrderChat = ({ orderId, me, onBack, startCall }) => {
               className="flex-1 min-w-0 text-[1.6rem] font-semibold"
             />
           </div>
-          <div className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-0.5 text-[1.4rem] text-secondary-text">
+          <div className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-0.5 text-[1.5rem] text-secondary-text">
              <span><IconText>{statusBadge(order.status)}</IconText></span>
-             <span><TaxiIcon name="time" className="inline-block align-[-0.2em]" /> {formatWhen(order.when)}</span>
+             <span><TaxiIcon name="time" className="inline-block align-[-0.2em]" /> {formatWhen(order.when, cityTz)}</span>
              {order.priceAgreed ? <span className="text-cta-icon font-semibold"><TaxiIcon name="cash" className="inline-block align-[-0.2em]" /> {order.priceAgreed}</span> : null}
           </div>
+          {order.waiting && <WaitingInfo waiting={order.waiting} className="mt-1 text-[1.4rem]" />}
           {peerLine && (
-            <div className="mt-1 break-words text-[1.4rem] text-primary-text">
+            <div className="mt-1 break-words text-[1.5rem] text-primary-text">
               {myRole === "passenger"
                 ? <><TaxiIcon name="driver" className="inline-block align-[-0.2em]" /> {peerLine}</>
                 : <><TaxiIcon name="passenger" className="inline-block align-[-0.2em]" /> {peerLine}</>}
             </div>
           )}
           {myRole === "dispatcher" && (order.passenger?.name || order.driver?.displayName) && (
-            <div className="mt-1 space-y-1 text-[1.4rem]">
+            <div className="mt-1 space-y-1 text-[1.5rem]">
               {order.passenger?.name && (
                 <div className="flex flex-wrap items-center gap-2">
                   <span className="text-secondary-text">Пассажир: {order.passenger.name}</span>
@@ -378,9 +413,9 @@ const OrderChat = ({ orderId, me, onBack, startCall }) => {
           )}
         </div>
         <div className="flex flex-wrap items-center gap-2 mt-2 justify-center">
-          {isParticipant && CALLABLE.includes(order.status) && otherId && (
+          {canCallPeer && CALLABLE.includes(order.status) && (
             <button
-              className="bg-success text-white px-3 py-1.5 rounded-lg text-sm"
+              className="bg-success text-white px-3.5 py-2 rounded-xl text-[1.4rem] font-semibold"
               onClick={() =>
                 startCall({
                   kind: "order",
@@ -395,28 +430,31 @@ const OrderChat = ({ orderId, me, onBack, startCall }) => {
             </button>
           )}
           {isParticipant &&
-            ["ASSIGNED", "ARRIVING", "WAITING", "IN_RIDE", "PUBLISHED"].includes(order.status) && (
-              <button className="bg-danger text-white px-3 py-1.5 rounded-lg text-sm" onClick={sos}>
+            ["PUBLISHED", "ASSIGNED", "ARRIVING", "WAITING", "IN_RIDE", "DISPUTE"].includes(order.status) && (
+              <button className="bg-danger text-white px-3.5 py-2 rounded-xl text-[1.4rem] font-semibold" onClick={sos}>
                 SOS
               </button>
             )}
           {isParticipant && (
-            <button className="border border-secondary-text/40 px-3 py-1.5 rounded-lg text-sm" onClick={share}>
+            <button className="border border-secondary-text/40 px-3.5 py-2 rounded-xl text-[1.4rem] font-semibold" onClick={share}>
                <TaxiIcon name="share" className="inline-block align-[-0.2em]" /> Поделиться
             </button>
           )}
           {isParticipant && otherId && (
-            <button className="underline text-secondary-text text-sm" onClick={blockPeer}>
+            <button
+              className="border border-secondary-text/40 text-secondary-text px-3.5 py-2 rounded-xl text-[1.4rem] font-semibold"
+              onClick={blockPeer}
+            >
               Блок
             </button>
           )}
         </div>
 
-      {error && <div className="text-danger text-sm px-3 py-1">{error}</div>}
+      {error && <div className="text-danger text-[1.4rem] px-3 py-1">{error}</div>}
 
       {order.status === "PUBLISHED" && offers.length > 0 && (
         <div className="p-3 border-b border-secondary-text/20 space-y-2 text-center">
-          <div className="text-xs text-secondary-text">Отклики водителей · {offers.length}</div>
+          <div className="text-[1.3rem] text-secondary-text">Отклики водителей · {offers.length}</div>
           <div className="space-y-2">
             {offers.map((offer) => (
               <div
@@ -431,14 +469,14 @@ const OrderChat = ({ orderId, me, onBack, startCall }) => {
                 </div>
                 {myRole === "passenger" && offer.status === "PENDING" && (
                   <button
-                    className="ml-auto bg-success text-white px-3 py-1 rounded shrink-0"
+                    className="ml-auto bg-success text-white px-3.5 py-2 rounded-xl text-[1.4rem] font-semibold shrink-0"
                     onClick={() => acceptOffer(offer._id)}
                   >
                     Принять
                   </button>
                 )}
                 {offer.status === "ACCEPTED" && (
-                  <span className="ml-auto text-success text-xs shrink-0">Принят</span>
+                  <span className="ml-auto text-success text-[1.3rem] shrink-0">Принят</span>
                 )}
               </div>
             ))}
@@ -446,11 +484,11 @@ const OrderChat = ({ orderId, me, onBack, startCall }) => {
         </div>
       )}
 
-      <div className="flex-1 overflow-y-auto p-3 space-y-2">
+      <div className="flex-1 min-h-0 overflow-y-auto p-3 space-y-2">
         {messages.map((message) => {
           if (message.kind === "system") {
             return (
-              <div key={message._id} className="text-center text-xs text-secondary-text py-1">
+              <div key={message._id} className="text-center text-[1.3rem] text-secondary-text py-1">
                 {message.body}
               </div>
             );
@@ -469,7 +507,7 @@ const OrderChat = ({ orderId, me, onBack, startCall }) => {
                   .map((button) => (
                     <button
                       key={button.action + button.label}
-                      className="btn-accent press px-3 py-1 rounded-xl text-sm font-semibold"
+                      className="btn-accent press px-4 py-2 rounded-xl text-[1.5rem] font-semibold"
                       onClick={() => runAction(button)}
                     >
                       {button.label}
@@ -484,7 +522,7 @@ const OrderChat = ({ orderId, me, onBack, startCall }) => {
                 key={message._id}
                 className={`max-w-[82%] rounded-2xl p-2.5 text-[1.8rem] leading-snug break-words ${message.mine ? "btn-accent ml-auto text-[#111]" : "glass"}`}
               >
-                {message.senderName && <div className="text-xs text-secondary-text">{message.senderName}</div>}
+                {message.senderName && <div className="text-[1.2rem] text-secondary-text">{message.senderName}</div>}
                 <img
                   src={message.meta?.imageUrl}
                   alt="Фото"
@@ -499,12 +537,12 @@ const OrderChat = ({ orderId, me, onBack, startCall }) => {
                 key={message._id}
                 className={`max-w-[82%] rounded-2xl p-2.5 text-[1.8rem] leading-snug break-words ${message.mine ? "btn-accent ml-auto text-[#111]" : "glass"}`}
               >
-                {message.senderName && <div className="text-xs text-secondary-text">{message.senderName}</div>}
+                {message.senderName && <div className="text-[1.2rem] text-secondary-text">{message.senderName}</div>}
                 <div className="flex items-center gap-2">
                    <TaxiIcon name="microphone" />
                   <audio controls src={message.meta?.voiceNoteUrl} />
                   {message.meta?.voiceNoteDuration && (
-                    <span className="text-xs text-secondary-text">
+                    <span className="text-[1.2rem] text-secondary-text">
                       {message.meta.voiceNoteDuration} с
                     </span>
                   )}
@@ -517,17 +555,21 @@ const OrderChat = ({ orderId, me, onBack, startCall }) => {
               key={message._id}
               className={`max-w-[82%] rounded-2xl p-2.5 text-[1.8rem] leading-snug break-words ${message.mine ? "btn-accent ml-auto text-[#111]" : "glass"}`}
             >
-              {message.senderName && <div className="text-xs text-secondary-text">{message.senderName}</div>}
+              {message.senderName && <div className="text-[1.2rem] text-secondary-text">{message.senderName}</div>}
               {message.body}
             </div>
           );
         })}
       </div>
 
-      {isParticipant && order.status === "COMPLETED" && (
+      {isParticipant && order.status === "COMPLETED" && order.driverId && (
         <div className="p-3 border-t border-secondary-text/20">
-          <div className="text-sm mb-1">
-            {rated ? `Вы оценили поездку: ${stars} из 5` : "Оцените поездку:"}
+          <div className="text-[1.4rem] mb-1">
+            {rated
+              ? `Вы оценили поездку: ${stars} из 5`
+              : myRole === "driver"
+                ? "Оцените пассажира:"
+                : "Оцените водителя и поездку:"}
           </div>
           <div className="flex gap-1" onMouseLeave={() => setHoverStars(0)}>
             {[1, 2, 3, 4, 5].map((value) => {
@@ -557,7 +599,7 @@ const OrderChat = ({ orderId, me, onBack, startCall }) => {
       )}
 
       <form
-        className="flex items-center gap-1 p-1.5 pl-2 rounded-full bg-[#141414]/90 border border-secondary-text/25 safe-area-bottom"
+        className="flex items-end gap-1 p-1.5 pl-2 rounded-[1.6rem] bg-[#141414]/90 border border-secondary-text/25 safe-area-bottom"
         onSubmit={(event) => {
           event.preventDefault();
           send(text);
@@ -582,22 +624,30 @@ const OrderChat = ({ orderId, me, onBack, startCall }) => {
           type="button"
           className={`shrink-0 w-[3.2rem] h-[3.2rem] rounded-full flex items-center justify-center text-[1.4rem] hover:bg-white/10 ${recording ? "text-danger animate-pulse" : ""}`}
           title="Голосовое сообщение"
-          onClick={toggleRecording}
+          onClick={voice.toggle}
         >
            <TaxiIcon name={recording ? "record" : "microphone"} />{recording ? ` ${recordSeconds}с` : null}
         </button>
-        <input
-          className="flex-1 min-w-0 bg-transparent text-white placeholder:text-secondary-text px-2 py-1.5 text-[1.8rem] focus:outline-none"
+        <textarea
+          ref={messageRef}
+          rows={1}
+          enterKeyHint="send"
+          className="block flex-1 min-w-0 bg-transparent text-white placeholder:text-secondary-text px-2 py-1.5 text-[1.8rem] leading-snug resize-none max-h-[12rem] overflow-y-auto focus:outline-none"
           value={text}
           // Keyboard opens only after an explicit tap or focus on the field
           readOnly={!armed}
           onPointerDown={() => setArmed(true)}
           onFocus={() => setArmed(true)}
           onChange={(event) => setText(event.target.value)}
-          placeholder={uploading ? "Загрузка..." : "Введите сообщение"}
-          disabled={uploading || recording}
+          onKeyDown={(event) => {
+            if (event.key !== "Enter" || event.shiftKey || event.nativeEvent.isComposing) return;
+            event.preventDefault();
+            if (text.trim() && !busy && !recording) send(text);
+          }}
+          placeholder={busy ? "Загрузка..." : "Введите сообщение"}
+          disabled={busy || recording}
         />
-         <button className="press btn-accent shrink-0 w-[3.6rem] h-[3.6rem] rounded-full flex items-center justify-center text-[1.4rem] font-bold disabled:opacity-40" type="submit" onMouseDown={(event) => event.preventDefault()} disabled={!text.trim() || uploading || recording} aria-label="Отправить"><TaxiIcon name="send" /></button>
+         <button className="press btn-accent shrink-0 w-[3.6rem] h-[3.6rem] rounded-full flex items-center justify-center text-[1.4rem] font-bold disabled:opacity-40" type="submit" onMouseDown={(event) => event.preventDefault()} disabled={!text.trim() || busy || recording} aria-label="Отправить"><TaxiIcon name="send" /></button>
       </form>
     </div>
   );

@@ -8,14 +8,21 @@ import DirectChat from "./DirectChat";
 import ChatList from "./ChatList";
 import AddressInput from "./AddressInput";
 import TimePicker from "./TimePicker";
-import { statusBadge, formatWhen, defaultScheduledAt } from "./statusLabels";
+import {
+  statusBadge,
+  formatWhen,
+  formatWallWhen,
+  defaultScheduledAt,
+  zonedWallToUtc,
+} from "./statusLabels";
 import TaxiIcon, { IconText } from "./TaxiIcon";
+import WaitingInfo from "./WaitingInfo";
 
 // Passenger panel, mobile-first: the order composer sits at the BOTTOM of the
 // screen like a messenger input; recent orders fill the scrollable area above.
 const ACTIVE_STATUSES = ["DRAFT", "PUBLISHED", "ASSIGNED", "ARRIVING", "WAITING", "IN_RIDE", "DISPUTE"];
 
-const PassengerPanel = ({ me, cityId, cityName, cityNames, refreshMe, startCall }) => {
+const PassengerPanel = ({ me, cityId, cityTz, cityName, cityNames, refreshMe, startCall }) => {
   const dispatch = useDispatch();
   const { socketListen, socket } = useSocket();
   const [view, setView] = useState(null); // { type: "order" | "direct", id }
@@ -30,11 +37,9 @@ const PassengerPanel = ({ me, cityId, cityName, cityNames, refreshMe, startCall 
   // Композер заказа: маршрут одной строкой, сейчас или на время
   const [route, setRoute] = useState("");
   const [notes, setNotes] = useState("");
-  // Contact phone: prefilled from the account; the dispatcher calls it on SOS.
-  // Never shown to the driver.
-  const [phone, setPhone] = useState(me?.user?.phone ?? "");
   const [whenType, setWhenType] = useState("now");
-  const [whenAt, setWhenAt] = useState(defaultScheduledAt());
+  // Wall clock of the selected city, not of this device
+  const [whenAt, setWhenAt] = useState(() => defaultScheduledAt(cityTz));
   const [timeOpen, setTimeOpen] = useState(false);
   const [sending, setSending] = useState(false);
   // Composer is collapsed by default: the form opens on tap and folds back
@@ -87,7 +92,15 @@ const PassengerPanel = ({ me, cityId, cityName, cityNames, refreshMe, startCall 
   };
 
   if (view?.type === "order") {
-    return <OrderChat orderId={view.id} me={me} onBack={closeView} startCall={startCall} />;
+    return (
+      <OrderChat
+        orderId={view.id}
+        me={me}
+        cityTz={cityTz}
+        onBack={closeView}
+        startCall={startCall}
+      />
+    );
   }
   if (view?.type === "direct") {
     return <DirectChat chatId={view.id} me={me} onBack={closeView} />;
@@ -103,10 +116,10 @@ const PassengerPanel = ({ me, cityId, cityName, cityNames, refreshMe, startCall 
         cityId,
         route: route.trim(),
         ...(notes.trim() && { notes: notes.trim() }),
-        ...(phone.trim() && { phone: phone.trim() }),
         ...(whenType === "scheduled" && {
           whenType: "scheduled",
-          whenAt: new Date(whenAt).toISOString(),
+          // "07:00" on the city clock -> the matching UTC instant
+          whenAt: zonedWallToUtc(whenAt, cityTz)?.toISOString(),
         }),
         ...(directTarget && {
           targetDriverId: directTarget.driverId,
@@ -119,7 +132,7 @@ const PassengerPanel = ({ me, cityId, cityName, cityNames, refreshMe, startCall 
       setRoute("");
       setNotes("");
       setWhenType("now");
-      setWhenAt(defaultScheduledAt());
+      setWhenAt(defaultScheduledAt(cityTz));
       setTab("orders");
       setComposerOpen(false);
       dispatch(
@@ -203,8 +216,9 @@ const PassengerPanel = ({ me, cityId, cityName, cityNames, refreshMe, startCall 
         </div>
       )}
 <div className="text-secondary-text mt-1">
-         <IconText>{statusBadge(order.status)}</IconText> · {formatWhen(order.when)}
+         <IconText>{statusBadge(order.status)}</IconText> · {formatWhen(order.when, cityTz)}
       </div>
+      {order.waiting && <WaitingInfo waiting={order.waiting} className="mt-1" />}
       <div className="mt-1 text-cta-icon text-[1.2rem] font-semibold">Открыть заказ →</div>
     </button>
   );
@@ -414,10 +428,7 @@ const PassengerPanel = ({ me, cityId, cityName, cityNames, refreshMe, startCall 
             >
               <span className="flex items-center gap-2">
                  <TaxiIcon name="clock" />
-                <span>
-                  {(whenAt.split("T")[1] ?? "")} ·{" "}
-                  {new Date(whenAt).toLocaleDateString("ru-RU", { day: "numeric", month: "long" })}
-                </span>
+                <span>{formatWallWhen(whenAt, cityTz)}</span>
               </span>
               <span className="text-cta-icon font-semibold">Изменить</span>
             </button>
@@ -432,19 +443,6 @@ const PassengerPanel = ({ me, cityId, cityName, cityNames, refreshMe, startCall 
             cityName={cityName}
             cities={cityNames}
             listId="route-suggestions"
-          />
-
-          {/* Номер для связи: нужен диспетчеру на случай SOS; водителю не показывается */}
-          <label className="sr-only" htmlFor="taxi-order-phone">Телефон для связи</label>
-          <input
-            id="taxi-order-phone"
-            type="tel"
-            inputMode="tel"
-            autoComplete="tel"
-            className="w-full bg-[#0d0d0d] text-white placeholder:text-secondary-text border border-secondary-text/30 rounded-2xl px-3 py-2.5 focus:border-accent focus:outline-none transition-colors text-[1.5rem] text-primary-text"
-            placeholder="Телефон для связи с диспетчером"
-            value={phone}
-            onChange={(event) => setPhone(event.target.value)}
           />
 
           {/* Комментарий + кнопка заказа — одна строка в стиле мессенджера:
@@ -494,6 +492,7 @@ const PassengerPanel = ({ me, cityId, cityName, cityNames, refreshMe, startCall 
         onChange={setWhenAt}
         onClose={() => setTimeOpen(false)}
         title="Когда подать машину"
+        tz={cityTz}
       />
     </div>
   );
