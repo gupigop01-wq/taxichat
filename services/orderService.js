@@ -6,6 +6,8 @@ const Message = require("../models/Message");
 const Membership = require("../models/Membership");
 const DriverProfile = require("../models/DriverProfile");
 const ApiError = require("../utilities/errors");
+const { waitingView, waitingFeeText } = require("../utilities/waiting");
+const { whenText } = require("./ai/labels");
 const botDispatcher = require("./botDispatcher");
 
 const ORDER_STATUSES = [
@@ -131,33 +133,88 @@ const statusEvents = (order, payload) => [
 
 const PENALTY_BAN_THRESHOLD = 10;
 const PENALTY_STATUSES = ["ASSIGNED", "ARRIVING", "WAITING", "IN_RIDE"];
+// Points fade with time: one point leaves for every full day without a new
+// penalty, so old mistakes never accumulate into a lifetime ban
+const PENALTY_DECAY_MS = 24 * 60 * 60 * 1000;
 
-// Late cancels by participants add penalty points; the threshold auto-bans
-// the account (concept 1.9)
+// Points still standing today: stored points minus one per full day of quiet
+const currentPenaltyPoints = (user, now = Date.now()) => {
+  const stored = user.penaltyPoints ?? 0;
+  if (stored <= 0) return 0;
+  const last = user.penaltyAt ? new Date(user.penaltyAt).getTime() : null;
+  if (!last) return stored;
+  const days = Math.max(0, Math.floor((now - last) / PENALTY_DECAY_MS));
+  return Math.max(0, stored - days);
+};
+
+// The actor is at fault unless the evidence excuses him: the driver may leave
+// without a penalty only after the no-show window has really expired (the
+// driver cannot excuse himself by pressing "wait" a second before cancelling),
+// and the passenger is excused only when the driver never reached the pickup.
+const lastStatusAt = (order, status) => {
+  const entry = [...(order.statusLog ?? [])].reverse().find((item) => item.status === status);
+  return entry ? new Date(entry.at).getTime() : null;
+};
+
+const isFaultlessCancel = async (order, actor, previousStatus) => {
+  if (actor.role !== "driver") return false;
+  if (previousStatus !== "WAITING") return false;
+
+  // The snapshot is authoritative: it survives a start/undo cycle, while the
+  // status log has a fresh WAITING entry after every undo.
+  const waitedAt = order.waiting?.startedAt
+    ? new Date(order.waiting.startedAt).getTime()
+    : lastStatusAt(order, "WAITING");
+  if (!waitedAt) return false;
+
+  let freeMinutes = order.waiting?.freeMinutes;
+  if (freeMinutes == null) {
+    const City = require("../models/City");
+    const city = await City.findById(order.cityId).select("settings.waitingMinutes");
+    freeMinutes = city?.settings?.waitingMinutes ?? 10;
+  }
+  return Date.now() - waitedAt >= freeMinutes * 60 * 1000;
+};
+
+// Late cancels by the guilty party add penalty points; the threshold auto-bans
+// the account for three days (concept 1.9). The ban lifts by itself (or by an
+// admin), and the points have decayed by then.
 const applyPenalty = async (order, event, actor, previousStatus) => {
   if (event !== "cancel") return;
   if (!PENALTY_STATUSES.includes(previousStatus)) return;
   if (!["passenger", "driver"].includes(actor.role) || !actor.userId) return;
+  if (await isFaultlessCancel(order, actor, previousStatus)) return;
 
   const User = require("../models/User");
   const { logAudit } = require("../utilities/audit");
+  const { disconnectUser } = require("../utilities/sockets");
 
   const user = await User.findById(actor.userId);
   if (!user || user.isSuperadmin) return;
 
-  user.penaltyPoints = (user.penaltyPoints ?? 0) + 1;
-  if (user.penaltyPoints >= PENALTY_BAN_THRESHOLD && !user.banned) {
+  const now = Date.now();
+  const points = currentPenaltyPoints(user, now) + 1;
+  user.penaltyPoints = points;
+  user.penaltyAt = new Date(now);
+  if (points >= PENALTY_BAN_THRESHOLD && !user.banned) {
     user.banned = true;
+    user.banReason = "Автобан за повторные отмены после назначения";
+    user.banUntil = new Date(now + 3 * 24 * 60 * 60 * 1000);
+    user.bannedAt = new Date(now);
   }
   await user.save();
-  if (user.banned) require("../utilities/sockets").disconnectUser(user._id);
+  if (user.banned) disconnectUser(user._id);
 
   await logAudit({
     actorId: actor.userId,
     action: user.banned ? "penalty.autoBan" : "penalty.added",
     targetType: "User",
     targetId: user._id,
-    payload: { orderId: order._id, points: user.penaltyPoints },
+    payload: {
+      orderId: order._id,
+      points,
+      ...(user.banned && { banUntil: user.banUntil }),
+    },
   });
 };
 
@@ -214,7 +271,7 @@ const setDriverShift = async (userId, shift) => {
 
 // Adds the bot system message, refreshes the pinned order card and posts
 // the quick action buttons for the new status (concept 1.7)
-const updateOrderChat = async (order, { membersToAdd = [], systemText } = {}) => {
+const updateOrderChat = async (order, { membersToAdd = [], systemText, extraTexts = [] } = {}) => {
   if (!order.chatId) return;
 
   if (membersToAdd.length > 0) {
@@ -226,6 +283,9 @@ const updateOrderChat = async (order, { membersToAdd = [], systemText } = {}) =>
 
   if (systemText) {
     await botDispatcher.postSystemMessage(order.chatId, systemText);
+  }
+  for (const text of extraTexts) {
+    await botDispatcher.postSystemMessage(order.chatId, text);
   }
 
   await botDispatcher.upsertOrderCard(order);
@@ -245,7 +305,7 @@ const updateOrderChat = async (order, { membersToAdd = [], systemText } = {}) =>
 // The single entry point for every status change (concept 1.6).
 // Writes statusLog, posts a bot system message to the order chat and returns
 // socket events for the caller to emit.
-const transition = (order, event, actor, { reason } = {}) => withOrderChange(order._id, async () => {
+const transition = (order, event, actor, { reason, source } = {}) => withOrderChange(order._id, async () => {
   assertTransition(order, event, actor);
 
   if (event === "cancel" && !reason)
@@ -299,6 +359,67 @@ const transition = (order, event, actor, { reason } = {}) => withOrderChange(ord
     systemText = `${SYSTEM_MESSAGES[event]}. ${reason}`;
   }
 
+  // Paid waiting (city settings): the terms are snapshotted at "Я на месте".
+  // Leaving WAITING freezes the accrued minutes; a mistaken start is undone
+  // without charging the time in ride.
+  const extraTexts = [];
+  if (event === "wait") {
+    const City = require("../models/City");
+    const city = await City.findById(order.cityId).select(
+      "tz settings.waitingMinutes settings.waitingPricePerMin"
+    );
+    const freeMinutes = Math.max(0, city?.settings?.waitingMinutes ?? 10);
+    const pricePerMin = Math.max(0, city?.settings?.waitingPricePerMin ?? 0);
+    // A booking's free window starts at the booked pickup time, not at the
+    // check-in: an early arrival must not eat the passenger's free minutes.
+    // A late check-in starts now, so the passenger pays nothing for the
+    // driver's own delay.
+    const bookedMs =
+      order.when?.type === "scheduled" && order.when?.at
+        ? new Date(order.when.at).getTime()
+        : null;
+    const now = Date.now();
+    const startsAt = bookedMs && bookedMs > now ? bookedMs : now;
+    order.waiting = {
+      startedAt: new Date(startsAt),
+      freeMinutes,
+      pricePerMin,
+      endedAt: null,
+    };
+    const rateText = pricePerMin > 0 ? `, далее ${pricePerMin} ₽/мин` : "";
+    extraTexts.push(
+      startsAt > now
+        ? `Бесплатное ожидание ${freeMinutes} мин${rateText} начнётся по брони: ${whenText(
+            order.when,
+            city?.tz
+          )}`
+        : `Бесплатное ожидание ${freeMinutes} мин${rateText}`
+    );
+  }
+
+  if (
+    ["start", "no_show", "cancel", "dispute"].includes(event) &&
+    order.waiting?.startedAt &&
+    !order.waiting.endedAt
+  ) {
+    order.waiting.endedAt = new Date();
+    const feeText = waitingFeeText(waitingView(order.waiting));
+    if (feeText) extraTexts.push(feeText);
+  }
+
+  if (event === "undo_start" && order.waiting?.startedAt && order.waiting.endedAt) {
+    // The clock was paused by the ride: shift the start forward by the time
+    // spent in IN_RIDE, keeping the paid minutes accrued before the start.
+    // A booking ride started before the booked time never ran the free window,
+    // so its anchor stays on the booked time.
+    const startedMs = new Date(order.waiting.startedAt).getTime();
+    const endedMs = new Date(order.waiting.endedAt).getTime();
+    if (endedMs > startedMs) {
+      order.waiting.startedAt = new Date(startedMs + Math.max(0, Date.now() - endedMs));
+    }
+    order.waiting.endedAt = null;
+  }
+
   if (
     (event === "assign" || event === "activate") &&
     order.driverId
@@ -329,7 +450,7 @@ const transition = (order, event, actor, { reason } = {}) => withOrderChange(ord
     order = committed;
   }
 
-  await updateOrderChat(order, { membersToAdd, systemText });
+  await updateOrderChat(order, { membersToAdd, systemText, extraTexts });
 
   // Booking does NOT take the driver offline: he stays free for current
   // orders; he becomes busy only when the booking is activated
@@ -343,9 +464,7 @@ const transition = (order, event, actor, { reason } = {}) => withOrderChange(ord
   // Waiting timer for the no-show window (concept 1.6)
   if (event === "wait") {
     const { scheduleWaitingTimer } = require("../jobs/index");
-    const City = require("../models/City");
-    const city = await City.findById(order.cityId).select("settings.waitingMinutes");
-    await scheduleWaitingTimer(order, city?.settings?.waitingMinutes ?? 10);
+    await scheduleWaitingTimer(order);
   }
 
   // Penalty points for late cancels (concept 1.9)
@@ -367,11 +486,19 @@ const transition = (order, event, actor, { reason } = {}) => withOrderChange(ord
     .notifyOrderStatus(order, { status: order.status, eventId, actorId: actor.userId })
     .catch(() => undefined);
 
+  // Mirror the change into the AI dispatcher threads of everyone involved
+  await require("./ai/orderFeed").notifyOrderEvent(order, {
+    event,
+    actor,
+    reason,
+    source,
+  });
+
   return { order, events, previousStatus };
 });
 
 // Atomic assignment used by every assign path (concept 1.6: first-take race)
-const assignAtomically = (orderId, driverId, actor, { priceAgreed } = {}) => withOrderChange(orderId, async () => {
+const assignAtomically = (orderId, driverId, actor, { priceAgreed, source } = {}) => withOrderChange(orderId, async () => {
   const eventId = randomUUID();
   const order = await Order.findOneAndUpdate(
     { _id: orderId, status: "PUBLISHED" },
@@ -412,6 +539,12 @@ const assignAtomically = (orderId, driverId, actor, { priceAgreed } = {}) => wit
   void pushService
     .notifyOrderStatus(order, { status: "ASSIGNED", eventId, actorId: actor.userId })
     .catch(() => undefined);
+
+  await require("./ai/orderFeed").notifyOrderEvent(order, {
+    event: "assign",
+    actor,
+    source,
+  });
 
   return { order, events };
 });

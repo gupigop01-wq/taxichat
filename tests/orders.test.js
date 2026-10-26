@@ -3,6 +3,8 @@ const app = require("../app");
 const Chat = require("../models/Chat");
 const Message = require("../models/Message");
 const Order = require("../models/Order");
+const City = require("../models/City");
+const User = require("../models/User");
 const DriverProfile = require("../models/DriverProfile");
 const { connectTestDb, disconnectTestDb } = require("./db");
 const { setupPilotCity, createOrder } = require("./orderSetup");
@@ -261,6 +263,28 @@ describe("Orders and the state machine", () => {
     expect(otherDriverView.body.data.order.exactFrom).toBeUndefined();
   });
 
+  it("skips an offer whose driver account is gone instead of failing", async () => {
+    const created = await createBroadcastOrder();
+    const orderId = created.body.data.order._id;
+
+    for (const index of [0, 1]) {
+      const offerRes = await request(app)
+        .post(`/api/orders/${orderId}/offers`)
+        .set("Cookie", world.drivers[index].cookie)
+        .send({ priceText: `${300 + index * 50} руб`, etaMin: 5 + index });
+      expect(offerRes.status).toBe(201);
+    }
+
+    await User.findByIdAndDelete(world.drivers[1].user._id);
+
+    const offersList = await request(app)
+      .get(`/api/orders/${orderId}/offers`)
+      .set("Cookie", world.passenger.cookie);
+    expect(offersList.status).toBe(200);
+    expect(offersList.body.data.offers).toHaveLength(1);
+    expect(offersList.body.data.offers[0].driverName).toBeTruthy();
+  });
+
   it("in offers mode a driver must send an offer instead of taking the order", async () => {
     const created = await createBroadcastOrder();
     const res = await request(app)
@@ -303,6 +327,117 @@ describe("Orders and the state machine", () => {
     // Driver returns online after finishing
     const profile = await DriverProfile.findOne({ userId: world.drivers[0].user._id });
     expect(profile.shift).toBe("online");
+  });
+
+  it("paid waiting starts after the city's free window and freezes on start", async () => {
+    await City.findByIdAndUpdate(world.city._id, {
+      "settings.waitingMinutes": 2,
+      "settings.waitingPricePerMin": 7,
+    });
+
+    const created = await createBroadcastOrder({ matchMode: "first_take" });
+    const orderId = created.body.data.order._id;
+    const driverCookie = world.drivers[0].cookie;
+    await request(app).post(`/api/orders/${orderId}/accept`).set("Cookie", driverCookie).send({});
+
+    const act = (action) =>
+      request(app)
+        .post(`/api/orders/${orderId}/action`)
+        .set("Cookie", driverCookie)
+        .send({ action });
+
+    await act("arrive");
+    const waited = await act("wait");
+    expect(waited.status).toBe(200);
+    expect(waited.body.data.order.waiting).toMatchObject({
+      freeMinutes: 2,
+      pricePerMin: 7,
+      paidMinutes: 0,
+      fee: 0,
+      endedAt: null,
+    });
+
+    // The free window is over: 30 seconds into the paid one
+    const stored = await Order.findById(orderId);
+    stored.waiting.startedAt = new Date(Date.now() - 150 * 1000);
+    stored.markModified("waiting");
+    await stored.save();
+
+    const started = await act("start");
+    expect(started.status).toBe(200);
+    expect(started.body.data.order.waiting).toMatchObject({ paidMinutes: 1, fee: 7 });
+    expect(started.body.data.order.waiting.endedAt).toBeTruthy();
+
+    const bodies = (
+      await Message.find({ chatId: created.body.data.order.chatId }).sort({ createdAt: 1 })
+    ).map((message) => message.body);
+    expect(bodies).toContain("Бесплатное ожидание 2 мин, далее 7 ₽/мин");
+    expect(bodies).toContain("Платное ожидание: 1 мин × 7 ₽ = 7 ₽");
+
+    // The passenger sees the same frozen fee
+    const passengerView = await request(app)
+      .get(`/api/orders/${orderId}`)
+      .set("Cookie", world.passenger.cookie);
+    expect(passengerView.body.data.order.waiting.fee).toBe(7);
+
+    // A mistaken start is undone: the interval in ride is not charged again
+    const undone = await act("undo_start");
+    expect(undone.body.data.order.waiting.endedAt).toBeNull();
+    const restarted = await act("start");
+    expect(restarted.body.data.order.waiting.fee).toBe(7);
+  });
+
+  it("paid waiting applies to bookings as well", async () => {
+    await City.findByIdAndUpdate(world.city._id, {
+      "settings.waitingMinutes": 1,
+      "settings.waitingPricePerMin": 3,
+    });
+
+    const created = await createOrder(app, world.passenger, world.city, {
+      whenType: "scheduled",
+      whenAt: new Date(Date.now() + 2 * 60 * 60 * 1000).toISOString(),
+    });
+    const orderId = created.body.data.order._id;
+    const driverCookie = world.drivers[0].cookie;
+
+    await request(app).post(`/api/orders/${orderId}/book`).set("Cookie", driverCookie).send({});
+    await request(app).post(`/api/orders/${orderId}/activate`).set("Cookie", driverCookie).send({});
+
+    const act = (action) =>
+      request(app)
+        .post(`/api/orders/${orderId}/action`)
+        .set("Cookie", driverCookie)
+        .send({ action });
+    await act("arrive");
+    const pressedAt = Date.now();
+    const waited = await act("wait");
+    expect(waited.body.data.order.waiting).toMatchObject({
+      freeMinutes: 1,
+      pricePerMin: 3,
+      paidMinutes: 0,
+      fee: 0,
+    });
+
+    // The driver checked in early: the free window is anchored to the booked
+    // time, so the check-in itself neither starts nor charges anything
+    const stored = await Order.findById(orderId);
+    const bookedAt = new Date(stored.when.at).getTime();
+    const anchoredAt = new Date(waited.body.data.order.waiting.startedAt).getTime();
+    expect(anchoredAt).toBe(bookedAt);
+    expect(anchoredAt).toBeGreaterThan(pressedAt);
+
+    const bodies = (
+      await Message.find({ chatId: created.body.data.order.chatId }).sort({ createdAt: 1 })
+    ).map((message) => message.body);
+    expect(bodies.some((body) => body.includes("начнётся по брони"))).toBe(true);
+
+    // Once the booked time and the free window are over, billing is normal
+    stored.waiting.startedAt = new Date(Date.now() - 90 * 1000);
+    stored.markModified("waiting");
+    await stored.save();
+
+    const started = await act("start");
+    expect(started.body.data.order.waiting).toMatchObject({ paidMinutes: 1, fee: 3 });
   });
 
   it("cancel requires a reason and records it", async () => {

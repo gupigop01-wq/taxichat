@@ -5,21 +5,22 @@ const ApiError = require("../utilities/errors");
 const catchAsyncError = require("../utilities/catchAsyncError");
 const callService = require("../services/callService");
 
-// GET /api/calls/ice?orderId= — temporary TURN credentials bound to the user
-// and the order (concept 1.7.1)
+// GET /api/calls/ice?orderId= — temporary TURN credentials bound to the user.
+// TURN relays arbitrary traffic, so credentials are only issued to a
+// participant of a specific order (or of the order behind a direct chat).
 exports.getIceCredentials = catchAsyncError(async (req, res) => {
   const { orderId } = req.query;
 
-  if (orderId) {
-    if (!mongoose.isValidObjectId(orderId))
-      throw new ApiError(400, "Некорректный идентификатор заказа");
+  if (!orderId)
+    throw new ApiError(400, "Не указан заказ для звонка");
+  if (!mongoose.isValidObjectId(orderId))
+    throw new ApiError(400, "Некорректный идентификатор заказа");
 
-    const order = await Order.findById(orderId);
-    if (!order) throw new ApiError(404, "Заказ не найден");
+  const order = await Order.findById(orderId);
+  if (!order) throw new ApiError(404, "Заказ не найден");
 
-    if (!(await callService.isOrderCallParticipant(order, req.user._id)))
-      throw new ApiError(403, "Вы не участник этого заказа");
-  }
+  if (!(await callService.isOrderCallParticipant(order, req.user._id)))
+    throw new ApiError(403, "Вы не участник этого заказа");
 
   res.json({
     status: "success",

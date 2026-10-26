@@ -26,6 +26,7 @@ const callRouter = require("./routers/callRouter");
 const socialRouter = require("./routers/socialRouter");
 const citiesRouter = require("./routers/citiesRouter");
 const chatRouter = require("./routers/chatRouter");
+const aiRouter = require("./routers/aiRouter");
 const shareRouter = require("./routers/shareRouter");
 const {
   complaintRouter,
@@ -98,6 +99,7 @@ app.use("/api/orders", orderRouter);
 app.use("/api/calls", callRouter);
 app.use("/api/cities", citiesRouter);
 app.use("/api/chats", chatRouter);
+app.use("/api/ai", aiRouter);
 app.use("/api", socialRouter);
 app.use("/api/complaints", complaintRouter);
 app.use("/api/admin", adminComplaintRouter);

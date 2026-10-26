@@ -63,6 +63,7 @@ describe("Auth responses", () => {
     const reg = await request(app).post("/api/user/register").send({
       name: "Тест",
       username,
+      phone: "+7 902 111-22-33",
       password: "Bombila2026",
       confirmPassword: "Bombila2026",
     });

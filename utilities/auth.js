@@ -57,6 +57,15 @@ const protect = catchAsyncError(async (req, res, next) => {
 
   const user = await User.findById(payload.userId);
   if (!user) return next(new ApiError(401, "Пользователь не найден"));
+  // A temporary auto-ban lifts by itself once its term is over
+  if (user.banned && user.banUntil && user.banUntil <= new Date()) {
+    user.banned = false;
+    user.banUntil = undefined;
+    user.banReason = undefined;
+    user.penaltyPoints = 0;
+    user.penaltyAt = undefined;
+    await user.save();
+  }
   if (user.banned) return next(new ApiError(403, "Аккаунт заблокирован"));
 
   req.user = user;

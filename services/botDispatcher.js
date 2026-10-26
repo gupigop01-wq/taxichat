@@ -11,29 +11,32 @@ const CAR_CAPTION = (profile) =>
     : undefined;
 
 // Quick buttons shown in the order chat, filtered by the viewer's role.
-// action "text" makes the client send meta.text as a regular message.
+// The rule of thumb: a button exists only when the viewer can legally press it
+// in that status (see TRANSITIONS in orderService), and the text says what
+// actually happens next.
+//  - "text" buttons send meta.text as a regular chat message, so the other
+//    party sees it in the chat and gets a push.
+// There are no canned "running late" buttons: a participant who is late just
+// writes it in the chat, so the message stays specific instead of a template.
 const ACTIONS_BY_STATUS = {
   PUBLISHED: [
     { action: "offer", label: "Прислать отклик", roles: ["driver"] },
     { action: "book", label: "🔖 Забронировать на время", roles: ["driver"] },
     { action: "cancel", label: "Отменить заказ", roles: ["passenger"] },
+    { action: "dispute", label: "Открыть спор", roles: ["passenger"] },
   ],
   BOOKED: [
     { action: "activate", label: "🚕 Приступить к брони", roles: ["driver"] },
-    { action: "cancel", label: "Отменить", roles: ["passenger", "driver"] },
+    { action: "dispute", label: "Открыть спор", roles: ["passenger"] },
   ],
   ASSIGNED: [
-    { action: "arrive", label: "Выехал", roles: ["driver"] },
-    { action: "cancel", label: "Отменить", roles: ["passenger", "driver"] },
+    { action: "arrive", label: "Выехал к вам", roles: ["driver"] },
+    { action: "cancel", label: "Отменить поездку", roles: ["passenger", "driver"] },
+    { action: "dispute", label: "Открыть спор", roles: ["passenger", "driver"] },
   ],
   ARRIVING: [
     { action: "wait", label: "Я на месте", roles: ["driver"] },
-    {
-      action: "text",
-      label: "Опаздываю на 5 мин",
-      roles: ["passenger"],
-      text: "Опаздываю на 5 минут",
-    },
+    { action: "cancel", label: "Отменить поездку", roles: ["passenger", "driver"] },
     { action: "dispute", label: "Открыть спор", roles: ["passenger", "driver"] },
   ],
   WAITING: [
@@ -45,10 +48,18 @@ const ACTIONS_BY_STATUS = {
       roles: ["passenger"],
       text: "Жду у подъезда",
     },
+    { action: "dispute", label: "Открыть спор", roles: ["passenger", "driver"] },
   ],
   IN_RIDE: [
-    { action: "finish", label: "Завершить", roles: ["driver"] },
-    { action: "undo_start", label: "Отменить начало поездки", roles: ["driver"] },
+    { action: "finish", label: "Завершить поездку", roles: ["driver"] },
+    { action: "undo_start", label: "Поездка ещё не началась", roles: ["driver"] },
+    { action: "dispute", label: "Открыть спор", roles: ["passenger", "driver"] },
+  ],
+  // Only a dispatcher resolves a dispute: the participants already told their
+  // side through the chat and the SOS signal
+  DISPUTE: [
+    { action: "resolve_complete", label: "Поездка состоялась", roles: ["dispatcher"] },
+    { action: "resolve_cancel", label: "Отменить заказ", roles: ["dispatcher"] },
   ],
 };
 

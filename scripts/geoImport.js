@@ -2,6 +2,7 @@ const Region = require("../models/Region");
 const City = require("../models/City");
 const Zone = require("../models/Zone");
 const Landmark = require("../models/Landmark");
+const { tzForRegion } = require("../services/timezones");
 
 // Imports a reference dataset of the shape:
 // {
@@ -29,6 +30,11 @@ const importGeoData = async (data) => {
     const regionId = regionIds.get(cityData.region);
     if (!regionId) throw new Error(`Unknown region "${cityData.region}" for city "${cityData.name}"`);
 
+    // The dataset may omit tz; the region map still puts the city in the right
+    // zone instead of silently defaulting to Moscow time.
+    const tz = cityData.tz ?? tzForRegion(cityData.region);
+    if (!tz) throw new Error(`Unknown timezone for region "${cityData.region}"`);
+
     const city = await City.findOneAndUpdate(
       { oktmo: cityData.oktmo },
       {
@@ -36,10 +42,11 @@ const importGeoData = async (data) => {
           name: cityData.name,
           oktmo: cityData.oktmo,
           regionId,
-          tz: cityData.tz ?? "Europe/Moscow",
           ...(cityData.status && { status: cityData.status }),
           ...(cityData.alwaysActive && { alwaysActive: true }),
         },
+        // Re-import corrects a stale zone written by an earlier default
+        $set: { tz },
       },
       { upsert: true, new: true }
     );

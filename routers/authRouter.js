@@ -1,6 +1,7 @@
 const express = require("express");
 const rateLimit = require("express-rate-limit");
 const authController = require("../controllers/authController");
+const accountController = require("../controllers/accountController");
 const { validateBody } = require("../utilities/catchAsyncError");
 const { protect } = require("../utilities/auth");
 
@@ -20,5 +21,7 @@ router.post("/register", credentialsLimiter, validateBody(authController.registe
 router.post("/login", credentialsLimiter, validateBody(authController.loginSchema), authController.login);
 router.post("/logout", authController.logout);
 router.get("/me", protect, authController.me);
+// The person edits his own card (name, phone, about) at any time
+router.patch("/me", protect, accountController.updateMe);
 
 module.exports = router;

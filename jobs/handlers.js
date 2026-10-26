@@ -5,10 +5,14 @@ const Zone = require("../models/Zone");
 const Membership = require("../models/Membership");
 const DriverProfile = require("../models/DriverProfile");
 const Favorite = require("../models/Favorite");
+const AiSession = require("../models/AiSession");
 const { transition, assignAtomically } = require("../services/orderService");
+const { waitingView } = require("../utilities/waiting");
 const botDispatcher = require("../services/botDispatcher");
 const { emitOrderEvents } = require("../utilities/sockets");
 const { recalcCityStatus } = require("../utilities/cityStatus");
+const { cleanupAiChats } = require("../services/ai/cleanup");
+const { emitToUser } = require("../services/ai/sessions");
 
 const SYSTEM_ACTOR = { userId: undefined, role: "system" };
 
@@ -101,10 +105,19 @@ const runOrderExpire = async ({ orderId }) => {
   emitOrderEvents(events);
 };
 
-// Waiting timer: after waitingMinutes the driver may mark a no-show
+// Waiting timer: the free window is over; with a city rate waiting becomes
+// paid, and the driver may mark a no-show
 const runWaitingTimeout = async ({ orderId }) => {
   const order = await Order.findById(orderId);
   if (!order || order.status !== "WAITING") return;
+  const waiting = waitingView(order.waiting);
+  if (waiting?.pricePerMin > 0) {
+    await botDispatcher.postSystemMessage(
+      order.chatId,
+      `Бесплатное ожидание ${waiting.freeMinutes} мин истекло. Дальше ожидание платное: ${waiting.pricePerMin} ₽/мин. Водитель может отметить неявку пассажира`
+    );
+    return;
+  }
   await botDispatcher.postSystemMessage(
     order.chatId,
     "Время ожидания истекло. Водитель может отметить неявку пассажира"
@@ -234,6 +247,26 @@ const runDirectChatCleanup = async () => {
   return result.modifiedCount ?? 0;
 };
 
+const runAiChatCleanup = async () => {
+  const summary = await cleanupAiChats();
+  const chatIds = Object.keys(summary.removed ?? {});
+  if (!chatIds.length) return summary;
+
+  const sessions = await AiSession.find({ chatId: { $in: chatIds } })
+    .select("chatId userId")
+    .lean();
+  for (const session of sessions) {
+    const ids = summary.removed[String(session.chatId)];
+    if (ids?.length) {
+      emitToUser(session.userId, "ai:cleanup", {
+        chatId: String(session.chatId),
+        ids,
+      });
+    }
+  }
+  return summary;
+};
+
 module.exports = {
   SYSTEM_ACTOR,
   runCascadeStep,
@@ -244,4 +277,5 @@ module.exports = {
   runHeartbeatSweep,
   runCityStatusRecalc,
   runDirectChatCleanup,
+  runAiChatCleanup,
 };

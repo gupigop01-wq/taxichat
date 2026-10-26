@@ -15,6 +15,8 @@ const registerUser = async (app, overrides = {}) => {
     .post("/api/user/register")
     .send({
       name: "Тестовый Пользователь",
+      // The phone is mandatory at registration; each test user gets its own
+      phone: `+7900${String(Date.now()).slice(-7)}`,
       password: "Bombila2026",
       confirmPassword: "Bombila2026",
       username,

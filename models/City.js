@@ -1,4 +1,5 @@
 const mongoose = require("mongoose");
+const { isValidTimeZone } = require("../services/time");
 
 const CITY_STATUSES = ["DORMANT", "WAITLIST", "PILOT", "ACTIVE", "SUSPENDED"];
 const MATCH_MODES = ["offers", "first_take", "dispatcher"];
@@ -32,7 +33,11 @@ const settingsSchema = new mongoose.Schema(
     dispatchPhone: { type: String, default: null },
     dispatchPhoneNote: { type: String, maxlength: 80, default: "" },
     cascadeTimeouts: { type: cascadeTimeoutsSchema, default: () => ({}) },
+    // Free waiting after the driver presses "Я на месте"; 0 means paid waiting
+    // starts immediately. When the window ends, waiting costs the rate below.
     waitingMinutes: { type: Number, default: 10 },
+    // Rubles per started minute beyond the free window; 0 disables paid waiting
+    waitingPricePerMin: { type: Number, default: 0 },
     preorderLeadMinutes: { type: Number, default: 30 },
     filterContacts: { type: Boolean, default: false },
     autoApproveDrivers: { type: Boolean, default: false },
@@ -49,8 +54,17 @@ const citySchema = new mongoose.Schema(
     oktmo: { type: String, required: true, unique: true },
     name: { type: String, required: true },
     regionId: { type: mongoose.Schema.Types.ObjectId, ref: "Region", index: true },
-    // IANA timezone, e.g. Europe/Samara
-    tz: { type: String, required: true, default: "Europe/Moscow" },
+    // IANA timezone, e.g. Europe/Samara. Every booking is parsed and shown in
+    // this zone, so a wrong value shifts rides by hours.
+    tz: {
+      type: String,
+      required: true,
+      default: "Europe/Moscow",
+      validate: {
+        validator: isValidTimeZone,
+        message: (props) => `Неизвестный часовой пояс: ${props.value}`,
+      },
+    },
     status: { type: String, enum: CITY_STATUSES, default: "DORMANT", index: true },
     thresholds: {
       pilotDrivers: { type: Number, default: 3 },

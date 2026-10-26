@@ -3,11 +3,16 @@ const app = require("../app");
 const { connectTestDb, disconnectTestDb } = require("./db");
 const { registerUser } = require("./helpers");
 const pushService = require("../utilities/pushService");
+const fs = require("fs");
+const path = require("path");
 
-jest.mock("web-push", () => ({
-  setVapidDetails: jest.fn(),
-  sendNotification: jest.fn().mockResolvedValue({ statusCode: 201 }),
-}), { virtual: true });
+// The package is a real dependency: a virtual mock once hid a missing install
+// while production had no push at all. The mock keeps the tests offline, and
+// the dependency test below plus requireActual keep the install honest.
+jest.mock("web-push", () => {
+  const actual = jest.requireActual("web-push");
+  return { ...actual, setVapidDetails: jest.fn(), sendNotification: jest.fn() };
+});
 
 const credentialKeys = ["VAPID_PUBLIC_KEY", "VAPID_PRIVATE_KEY"];
 const savedEnvironment = Object.fromEntries(
@@ -35,6 +40,23 @@ const goodSubscription = {
   endpoint: "https://push.example/sub-1",
   keys: { p256dh: "p256dhkey", auth: "authkey" },
 };
+
+describe("push package dependency", () => {
+  it("web-push is declared in package.json and actually installed", () => {
+    const pkg = require("../package.json");
+    expect(pkg.dependencies["web-push"]).toBeTruthy();
+    expect(fs.existsSync(path.join(__dirname, "..", "node_modules", "web-push"))).toBe(true);
+    // configure() only succeeds with both the package and the keys
+    expect(typeof pushService.configure).toBe("function");
+  });
+
+  it("the config template documents the VAPID variables", () => {
+    const template = fs.readFileSync(path.join(__dirname, "..", ".env.example"), "utf8");
+    for (const key of ["VAPID_PUBLIC_KEY", "VAPID_PRIVATE_KEY", "VAPID_SUBJECT"]) {
+      expect(template).toContain(key);
+    }
+  });
+});
 
 describe("push subscriptions API", () => {
   it("exposes the VAPID public key when configured", async () => {
@@ -105,7 +127,28 @@ describe("new order fan-out", () => {
     });
   };
 
-  it("notifies on-the-go drivers plus the dispatcher and region admin of the city", async () => {
+  const makeDriver = async (cityId, shift, phone) => {
+    const DriverProfile = require("../models/DriverProfile");
+    const Membership = require("../models/Membership");
+    const session = await registerUser(app);
+    const membership = await Membership.create({
+      userId: session.user._id,
+      cityId,
+      role: "driver",
+      status: "ACTIVE",
+    });
+    await DriverProfile.create({
+      membershipId: membership._id,
+      displayName: `Водитель ${phone.slice(-2)}`,
+      phone,
+      car: { color: "Белый", plate: phone.slice(-4) },
+      shift,
+    });
+    await subscribe(session.user._id);
+    return session.user._id;
+  };
+
+  it("notifies drivers on the line plus the dispatcher and region admin, not the resting driver", async () => {
     process.env.VAPID_PUBLIC_KEY = "BTestPublic";
     process.env.VAPID_PRIVATE_KEY = "TestPrivate";
     pushService.__resetConfiguredForTests();
@@ -116,12 +159,14 @@ describe("new order fan-out", () => {
       (await City.findOne({ name: "Слюдянка" })) ||
       (await City.create({ name: "Слюдянка", oktmo: "25" + Date.now() }));
     const people = {};
-    for (const role of ["driver", "dispatcher", "region_admin"]) {
+    for (const role of ["dispatcher", "region_admin"]) {
       const session = await registerUser(app);
       people[role] = session.user._id;
       await Membership.create({ userId: session.user._id, cityId: city._id, role, status: "ACTIVE" });
       await subscribe(session.user._id);
     }
+    people.driver = await makeDriver(city._id, "online", "+79001110001");
+    people.offShift = await makeDriver(city._id, "offline", "+79001110002");
 
     const result = await pushService.notifyNewOrder(
       { _id: "000000000000000000000001", cityId: city._id, from: { text: "Вокзал" }, to: { text: "Рынок" } },
@@ -133,8 +178,10 @@ describe("new order fan-out", () => {
     const webpush = require("web-push");
     const endpoints = webpush.sendNotification.mock.calls.map(([subscription]) => subscription.endpoint);
     for (const userId of Object.values(people)) {
+      if (userId === people.offShift) continue;
       expect(endpoints).toContain(`https://push.example/${userId}`);
     }
+    expect(endpoints).not.toContain(`https://push.example/${people.offShift}`);
   });
 });
 

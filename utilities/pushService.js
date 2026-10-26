@@ -1,19 +1,45 @@
-// Web Push (VAPID) sender. The web-push package is optional at runtime: when
-// it (or VAPID keys) are missing, pushes are skipped gracefully instead of
-// crashing the order flow — the in-app notices and socket events still work.
+// Web Push (VAPID) sender. Missing keys keep pushes disabled (the in-app
+// notices and socket events still work), but a missing web-push package is a
+// broken deployment: the dependency is required and is reported loudly once.
 let webpush = null;
+let packageError = null;
 try {
   webpush = require("web-push");
-} catch {
-  webpush = null;
+} catch (error) {
+  packageError = error;
+  console.error(
+    "[push] FATAL: the web-push package is not installed — push notifications are disabled. " +
+      "Run `npm install` (web-push is a required dependency).",
+    error.message
+  );
 }
 
 let configured = false;
+let keysWarned = false;
+let packageWarned = false;
 const configure = () => {
   if (configured) return true;
-  if (!webpush) return false;
+  if (!webpush) {
+    if (!packageWarned) {
+      packageWarned = true;
+      console.error("[push] push is unavailable: the web-push package is missing", packageError?.message ?? "");
+    }
+    return false;
+  }
   const { VAPID_PUBLIC_KEY, VAPID_PRIVATE_KEY } = process.env;
-  if (!VAPID_PUBLIC_KEY || !VAPID_PRIVATE_KEY) return false;
+  if (!VAPID_PUBLIC_KEY || !VAPID_PRIVATE_KEY) {
+    if (!keysWarned) {
+      keysWarned = true;
+      // Tests deliberately run without keys: the warning is for deployments
+      if (process.env.NODE_ENV !== "test") {
+        console.warn(
+          "[push] VAPID_PUBLIC_KEY / VAPID_PRIVATE_KEY are not set — push notifications are disabled. " +
+            "Generate keys with `npx web-push generate-vapid-keys` and put them in .env."
+        );
+      }
+    }
+    return false;
+  }
   webpush.setVapidDetails(
     process.env.VAPID_SUBJECT || "mailto:admin@bombila.app",
     VAPID_PUBLIC_KEY,
@@ -55,8 +81,33 @@ const sendPushToUser = async (userId, payload) => {
 };
 
 // Pushes to every active driver of a city (new order fan-out on the go).
-const sendPushToCityDrivers = async (cityId, payload, { excludeUserId } = {}) =>
-  sendPushToCityRole(cityId, "driver", payload, { excludeUserId });
+// New work belongs to the drivers who are on the line: a driver who went off
+// shift should not be woken for somebody else's ride.
+const sendPushToCityDrivers = async (cityId, payload, { excludeUserId } = {}) => {
+  if (!configure()) return { sent: 0, skipped: "push-not-configured" };
+  const Membership = require("../models/Membership");
+  const DriverProfile = require("../models/DriverProfile");
+  const memberships = await Membership.find({
+    cityId,
+    role: "driver",
+    status: "ACTIVE",
+  }).select("_id userId");
+  if (!memberships.length) return { sent: 0 };
+  const profiles = await DriverProfile.find({
+    membershipId: { $in: memberships.map((membership) => membership._id) },
+    shift: "online",
+  }).select("membershipId");
+  const userIdByMembership = new Map(
+    memberships.map((membership) => [String(membership._id), String(membership.userId)])
+  );
+  const recipientIds = profiles
+    .map((profile) => userIdByMembership.get(String(profile.membershipId)))
+    .filter((id) => id && id !== String(excludeUserId ?? ""));
+  const results = await Promise.allSettled(
+    recipientIds.map((id) => sendPushToUser(id, payload))
+  );
+  return { sent: results.filter((result) => result.value?.sent > 0).length };
+};
 
 // Pushes to the dispatchers and the region admin of a city.
 const sendPushToCityStaff = async (cityId, payload, { excludeUserId } = {}) => {
@@ -150,7 +201,9 @@ const notifyNewOffer = async (order, offer, { driverName, priceText, etaMin } = 
     tag: "bombila-live",
     renotify: true,
     url: "/",
+    // The service worker posts /accept with this id when "Принять" is tapped
     orderId: String(order._id ?? order.id),
+    offerId: String(offer._id ?? offer.id),
     requireInteraction: true,
     actions: [
       { action: "accept", title: "Принять" },
@@ -221,6 +274,8 @@ module.exports = {
   // test-only: forget the cached "configured" state between scenarios
   __resetConfiguredForTests: () => {
     configured = false;
+    keysWarned = false;
+    packageWarned = false;
   },
 };
 

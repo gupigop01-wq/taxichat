@@ -1,13 +1,3 @@
-// Normalizes a Russian phone to +7XXXXXXXXXX; returns null for invalid input
-const normalizePhone = (raw) => {
-  if (!raw) return null;
-  let digits = String(raw).replace(/\D/g, "");
-  if (digits.length === 11 && digits[0] === "8") digits = `7${digits.slice(1)}`;
-  if (digits.length === 11 && digits[0] === "7") return `+${digits}`;
-  if (digits.length === 10) return `+7${digits}`;
-  return null;
-};
-
 // Short car caption shown to passengers, e.g. "Белая 456"
 const carCaption = (car) =>
   [car.color, car.plate, car.brand].filter(Boolean).join(" ");
@@ -19,4 +9,6 @@ const sameCarPair = (a, b) =>
   String(a.car?.plate ?? "").trim().toLowerCase() ===
     String(b.car?.plate ?? "").trim().toLowerCase();
 
-module.exports = { normalizePhone, carCaption, sameCarPair };
+// Phones have a single implementation; re-exported so existing driver imports
+// keep working without a second, subtly different normalizer.
+module.exports = { carCaption, sameCarPair, normalizePhone: require("./phone").normalizePhone };

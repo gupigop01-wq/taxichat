@@ -1,6 +1,6 @@
 const mongoose = require("mongoose");
 
-const CHAT_TYPES = ["order", "zone", "city", "direct", "support"];
+const CHAT_TYPES = ["order", "zone", "city", "direct", "support", "ai"];
 
 // New-generation chat rooms (concept 1.7). Legacy ChatRoom keeps working for
 // the old contact chats; orders and direct calls use this model.

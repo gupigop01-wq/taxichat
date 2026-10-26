@@ -18,6 +18,8 @@ describe("Auth API", () => {
   const userData = {
     name: "Тест Пассажир",
     username: "TestPassenger",
+    // The phone is required at registration
+    phone: "+7 902 111-22-33",
     password: "Bombila2026",
     confirmPassword: "Bombila2026",
   };
@@ -45,6 +47,26 @@ describe("Auth API", () => {
       .send({ ...userData, confirmPassword: "different-pass" });
     expect(res.status).toBe(400);
     expect(res.body.message).toBe("Пароли не совпадают");
+  });
+
+  it("requires a phone number at registration", async () => {
+    const { phone, ...withoutPhone } = userData;
+    const res = await request(app).post("/api/user/register").send(withoutPhone);
+    expect(res.status).toBe(400);
+    expect(res.body.message).toMatch(/телефон/i);
+
+    const malformed = await request(app)
+      .post("/api/user/register")
+      .send({ ...userData, phone: "12345" });
+    expect(malformed.status).toBe(400);
+    expect(malformed.body.message).toMatch(/формат/i);
+  });
+
+  it("stores the phone in one canonical form", async () => {
+    const res = await request(app).post("/api/user/register").send(userData);
+    expect(res.status).toBe(201);
+    const me = await request(app).get("/api/user/me").set("Cookie", res.headers["set-cookie"]);
+    expect(me.body.data.user.phone).toBe("+79021112233");
   });
 
   it("rejects registration with a short password", async () => {

@@ -10,7 +10,13 @@ const catchAsyncError = require("../utilities/catchAsyncError");
 const { validateBody } = require("../utilities/catchAsyncError");
 const { logAudit } = require("../utilities/audit");
 const { recalcCityStatus } = require("../utilities/cityStatus");
-const { normalizePhone } = require("../utilities/drivers");
+const { normalizePhone } = require("../utilities/phone");
+const {
+  currentRoleInCity,
+  replaceRoleInCity,
+  assertSwitchAllowed,
+  dropOtherRoles,
+} = require("../utilities/cityRole");
 
 const carSchema = z.object({
   color: z.string().trim().min(1, "Укажите цвет автомобиля").max(30, "Цвет слишком длинный"),
@@ -46,6 +52,8 @@ const createMembershipSchema = z
 
 const updateMembershipSchema = z.object({
   zones: z.array(z.string()).min(1, "Выберите от 1 до 5 зон").max(5, "Выберите от 1 до 5 зон").optional(),
+  // Leaving a role: the membership is removed, not merely updated
+  leave: z.boolean().optional(),
 });
 
 const homeCitySchema = z.object({
@@ -53,7 +61,37 @@ const homeCitySchema = z.object({
 });
 
 exports.createMembershipSchema = createMembershipSchema;
-exports.updateMembershipSchema = updateMembershipSchema;
+// Leaving a role: the same schema, only { leave: true }
+exports.leaveSchema = updateMembershipSchema;
+
+// A person may leave a role he no longer needs. A driver with a live order or
+// an active shift lock from a dispatcher keeps his membership until resolved.
+const leaveRole = async (userId, membership) => {
+  const Order = require("../models/Order");
+  if (membership.role === "driver") {
+    const live = await Order.findOne({
+      driverId: userId,
+      cityId: membership.cityId,
+      status: { $in: ["BOOKED", "ASSIGNED", "ARRIVING", "WAITING", "IN_RIDE", "DISPUTE"] },
+    }).select("_id");
+    if (live) throw new ApiError(409, "Сначала завершите активную поездку");
+
+    const DriverProfile = require("../models/DriverProfile");
+    await DriverProfile.deleteOne({ membershipId: membership._id });
+  }
+
+  await logAudit({
+    actorId: userId,
+    action: "membership.left",
+    targetType: "Membership",
+    targetId: membership._id,
+    payload: { role: membership.role, cityId: membership.cityId },
+  });
+  await Membership.deleteOne({ _id: membership._id });
+  return membership;
+};
+
+exports.leaveRole = leaveRole;
 exports.homeCitySchema = homeCitySchema;
 
 const validateZonesBelongToCity = async (cityId, zoneIds) => {
@@ -82,9 +120,28 @@ exports.createMembership = [
       );
     }
 
+    // One role per city: a new application replaces the current role instead of
+    // adding a second one. A live ride keeps the driver role in place.
+    const current = await currentRoleInCity(req.user._id, cityId);
+    if (current && current.status === "ACTIVE" && current.role !== role) {
+      await assertSwitchAllowed(req.user._id, cityId, current.role);
+
+      await logAudit({
+        actorId: req.user._id,
+        action: "membership.roleSwitchRequested",
+        targetType: "Membership",
+        targetId: current._id,
+        payload: { cityId, from: current.role, to: role },
+      });
+    }
+
+    // The application replaces the previous role: the person is never
+    // passenger and driver-in-review at the same time
+    await dropOtherRoles(req.user._id, cityId, role);
+
     if (role === "passenger") {
       const status = ["PILOT", "ACTIVE"].includes(city.status) ? "ACTIVE" : "WAITLIST";
-      const membership = await Membership.create({
+      const membership = await replaceRoleInCity({
         userId: req.user._id,
         cityId,
         role,
@@ -232,6 +289,7 @@ exports.getMyMemberships = catchAsyncError(async (req, res) => {
 });
 
 // PATCH /api/memberships/:id — driver changes his zones; owner only
+// POST /api/memberships/:id — { leave: true } removes the membership
 exports.updateMembership = [
   validateBody(updateMembershipSchema),
   catchAsyncError(async (req, res) => {
@@ -255,6 +313,13 @@ exports.updateMembership = [
         targetId: membership._id,
         payload: { cityId: membership.cityId, zones: zoneIds },
       });
+    }
+
+    // Leaving a role is only allowed when nothing is in progress: an active
+    // order would be orphaned, and the dispatcher queue would keep the ghost
+    if (req.body.leave === true) {
+      const removed = await leaveRole(req.user._id, membership);
+      return res.json({ status: "success", data: { left: true, role: removed.role } });
     }
 
     res.json({ status: "success", data: { membership } });

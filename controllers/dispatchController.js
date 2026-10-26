@@ -21,7 +21,9 @@ const reviewSchema = z.object({
   reason: z.string().trim().max(500).optional(),
 });
 
-const driverView = (membership, profile, user) => ({
+// Dispatcher view of a driver: the dispatcher needs everything to run the
+// line — car, phone, current shift, live order and whether he is reachable
+const driverView = (membership, profile, user, extra = {}) => ({
   _id: membership._id,
   status: membership.status,
   createdAt: membership.createdAt,
@@ -30,8 +32,23 @@ const driverView = (membership, profile, user) => ({
   zones: membership.zones,
   user: user ? { _id: user._id, username: user.username, name: user.name } : undefined,
   displayName: profile?.displayName,
-  carCaption: profile ? carCaption(profile) : undefined,
-  ...(profile && { car: profile.car }),
+  carCaption: profile ? carCaption(profile.car ?? {}) : undefined,
+  ...(profile && {
+    car: profile.car,
+    // The driver's phone to call back; the account phone is the fallback
+    phone: profile.phone ?? user?.phone ?? null,
+    acceptDirectCalls: profile.acceptDirectCalls,
+  }),
+  shift: profile?.shift ?? "offline",
+  shiftNote: profile?.shiftNote ?? null,
+  lastSeen: profile?.lastSeen ?? null,
+  online: Boolean(
+    profile &&
+      profile.shift !== "offline" &&
+      profile.lastSeen &&
+      Date.now() - new Date(profile.lastSeen).getTime() <= 90 * 1000
+  ),
+  ...extra,
 });
 
 // GET /api/dispatch/:cityId/drivers?status=pending
@@ -48,7 +65,7 @@ exports.listDrivers = [
       throw new ApiError(403, "Недостаточно прав в этом городе");
 
     const memberships = await Membership.find({ cityId, role: "driver", status })
-      .populate("userId", "username name")
+      .populate("userId", "username name phone")
       .populate("zones", "name")
       .sort({ createdAt: 1 })
       .limit(200);
@@ -60,16 +77,31 @@ exports.listDrivers = [
       profiles.map((profile) => [String(profile.membershipId), profile])
     );
 
+    // Live occupation: the order a driver holds right now (if any)
+    const Order = require("../models/Order");
+    const activeOrders = await Order.find({
+      driverId: { $in: memberships.map((item) => item.userId?._id).filter(Boolean) },
+      status: { $in: ["BOOKED", "ASSIGNED", "ARRIVING", "WAITING", "IN_RIDE", "DISPUTE"] },
+    }).select("_id driverId status from to passengerId");
+    const orderByDriver = new Map(
+      activeOrders.map((order) => [String(order.driverId), order])
+    );
+
     res.json({
       status: "success",
       data: {
-        drivers: memberships.map((membership) =>
-          driverView(
-            membership,
-            profileByMembership.get(String(membership._id)),
-            membership.userId
-          )
-        ),
+        drivers: memberships.map((membership) => {
+          const profile = profileByMembership.get(String(membership._id));
+          const activeOrder = orderByDriver.get(String(membership.userId?._id));
+          return driverView(membership, profile, membership.userId, {
+            activeOrder: activeOrder && {
+              _id: activeOrder._id,
+              status: activeOrder.status,
+              from: activeOrder.from?.text,
+              to: activeOrder.to?.text,
+            },
+          });
+        }),
       },
     });
   }),

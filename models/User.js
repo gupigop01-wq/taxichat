@@ -55,8 +55,15 @@ const Schema = new mongoose.Schema({
   // Banned users cannot log in or use the platform
   banned: { type: Boolean, default: false },
   // Penalty points for late cancels; the threshold triggers an auto-ban
-  // (concept 1.9)
+  // (concept 1.9). Points fade: one leaves for every day without a penalty.
   penaltyPoints: { type: Number, default: 0 },
+  // When the last point was added (the decay is counted from it)
+  penaltyAt: Date,
+  // Set on an automatic ban: the reason shown to the user and the end of the
+  // temporary block. Manual bans by an admin have no banUntil.
+  banReason: String,
+  banUntil: Date,
+  bannedAt: Date,
   // Home city; changes are limited to once per 30 days
   homeCityId: { type: mongoose.Schema.Types.ObjectId, ref: "City" },
   homeCityChangedAt: Date,

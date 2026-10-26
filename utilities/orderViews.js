@@ -1,3 +1,5 @@
+const { waitingView } = require("./waiting");
+
 // Order serializers (concept 1.6 / 1.10): exact addresses and the passenger
 // name stay hidden from drivers until ASSIGNED. The passenger's phone is
 // never exposed to drivers; the driver's phone is added for the assigned
@@ -20,6 +22,13 @@ const baseView = (order) => ({
   notes: order.notes,
   status: order.status,
   statusLog: order.statusLog,
+  // Live free/paid waiting: ticks while WAITING, frozen after the ride starts
+  waiting: waitingView(order.waiting),
+  // Status before a dispute, so the dispatcher knows what is being decided
+  previousStatus:
+    order.status === "DISPUTE"
+      ? [...(order.statusLog ?? [])].reverse().find((entry) => entry.status !== "DISPUTE")?.status ?? null
+      : null,
   matchMode: order.matchMode,
   mode: order.mode,
   createdAt: order.createdAt,

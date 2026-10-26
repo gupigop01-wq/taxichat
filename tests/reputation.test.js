@@ -393,6 +393,107 @@ describe("Bans and share links", () => {
     expect(restored.status).toBe(200);
   });
 
+  it("the innocent side of a cancel is not penalised", async () => {
+    const User = require("../models/User");
+    const Order = require("../models/Order");
+
+    // The driver waited for the whole no-show window and the passenger never
+    // showed up: only the passenger is at fault
+    const noShowOrder = async () => {
+      const created = await createOrder(app, world.passenger, world.city, { matchMode: "first_take" });
+      const orderId = created.body.data.order._id;
+      await request(app).post(`/api/orders/${orderId}/accept`).set("Cookie", world.drivers[0].cookie).send({});
+      for (const action of ["arrive", "wait"]) {
+        await request(app).post(`/api/orders/${orderId}/action`).set("Cookie", world.drivers[0].cookie).send({ action });
+      }
+      return orderId;
+    };
+
+    const waitedLongEnough = async (orderId) => {
+      // Move the waiting snapshot and log entry past the city free window
+      const order = await Order.findById(orderId);
+      const at = new Date(Date.now() - 11 * 60 * 1000);
+      const entry = order.statusLog.find((item) => item.status === "WAITING");
+      entry.at = at;
+      order.markModified("statusLog");
+      if (order.waiting?.startedAt) order.waiting.startedAt = at;
+      await order.save();
+    };
+
+    // Driver cancels right after marking "waiting": he is still at fault
+    const early = await noShowOrder();
+    const earlyCancel = await request(app)
+      .post(`/api/orders/${early}/cancel`)
+      .set("Cookie", world.drivers[0].cookie)
+      .send({ reason: "Не хочу ждать" });
+    expect(earlyCancel.status).toBe(200);
+    const rushyDriver = await User.findById(world.drivers[0].user._id);
+    expect(rushyDriver.penaltyPoints).toBe(1);
+
+    // Waiting window expired: the driver leaves without a penalty
+    await User.findByIdAndUpdate(world.drivers[0].user._id, { penaltyPoints: 0, penaltyAt: undefined });
+    const orderId = await noShowOrder();
+    await waitedLongEnough(orderId);
+    const cancelled = await request(app)
+      .post(`/api/orders/${orderId}/cancel`)
+      .set("Cookie", world.drivers[0].cookie)
+      .send({ reason: "Пассажир не вышел" });
+    expect(cancelled.status).toBe(200);
+
+    const driver = await User.findById(world.drivers[0].user._id);
+    expect(driver.penaltyPoints).toBe(0);
+
+    // The passenger cancelling while the driver is already waiting is at fault
+    const waitingOrder = await noShowOrder();
+    await request(app)
+      .post(`/api/orders/${waitingOrder}/cancel`)
+      .set("Cookie", world.passenger.cookie)
+      .send({ reason: "Передумал" });
+    const passenger = await User.findById(world.passenger.user._id);
+    expect(passenger.penaltyPoints).toBe(1);
+  });
+
+  it("penalty points fade after full days without new penalties", async () => {
+    const User = require("../models/User");
+    const user = await User.findById(world.passenger.user._id);
+    user.penaltyPoints = 6;
+    user.penaltyAt = new Date(Date.now() - 4 * 24 * 60 * 60 * 1000);
+    await user.save();
+
+    const created = await createOrder(app, world.passenger, world.city, { matchMode: "first_take" });
+    const orderId = created.body.data.order._id;
+    await request(app).post(`/api/orders/${orderId}/accept`).set("Cookie", world.drivers[0].cookie).send({});
+    await request(app)
+      .post(`/api/orders/${orderId}/cancel`)
+      .set("Cookie", world.passenger.cookie)
+      .send({ reason: "Передумал" });
+
+    // 6 points - 4 quiet days + 1 new point
+    const after = await User.findById(world.passenger.user._id);
+    expect(after.penaltyPoints).toBe(3);
+    expect(after.banned).toBe(false);
+  });
+
+  it("an automatic ban is temporary and lifts itself after its term", async () => {
+    const User = require("../models/User");
+    const user = await User.findById(world.passenger.user._id);
+    user.penaltyPoints = 9;
+    user.banned = true;
+    user.banUntil = new Date(Date.now() - 60 * 1000);
+    user.banReason = "Автобан за повторные отмены после назначения";
+    await user.save();
+
+    const login = await request(app)
+      .post("/api/user/login")
+      .send({ username: user.username, password: "Bombila2026" });
+    expect(login.status).toBe(200);
+
+    const after = await User.findById(user._id);
+    expect(after.banned).toBe(false);
+    expect(after.penaltyPoints).toBe(0);
+    expect(after.banUntil).toBeUndefined();
+  });
+
   it("share link exposes only route, status and car caption", async () => {
     const created = await createOrder(app, world.passenger, world.city, {
       matchMode: "first_take",

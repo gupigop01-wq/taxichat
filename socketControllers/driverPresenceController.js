@@ -1,7 +1,4 @@
-const Membership = require("../models/Membership");
-const DriverProfile = require("../models/DriverProfile");
-
-const SHIFTS = ["online", "offline"];
+const { applyShiftChange, SHIFTS } = require("../services/driverShiftService");
 
 // Throttled presence updates for the free-drivers list (concept 1.6:
 // "не чаще раза в 5 секунд")
@@ -15,7 +12,22 @@ const emitPresence = (io, cityId, payload) => {
   io.to(`city:${key}`).emit("driver:presence", payload);
 };
 
+// The state change itself (not just the throttled broadcast) goes to the
+// driver who asked for it, so the toggle never depends on the throttle.
+const emitShiftState = (io, userId, cityId, profile) => {
+  const payload = {
+    driverId: String(userId),
+    shift: profile.shift,
+    shiftNote: profile.shiftNote ?? null,
+  };
+  io.to(`user:${userId}`).emit("driver:presence", payload);
+  io.to(`user:${userId}`).emit("driver:shiftChanged", payload);
+  io.to(`city:${cityId}`).emit("driver:presence", payload);
+};
+
 const driverProfileFor = async (userId) => {
+  const Membership = require("../models/Membership");
+  const DriverProfile = require("../models/DriverProfile");
   const membership = await Membership.findOne({
     userId,
     role: "driver",
@@ -35,24 +47,28 @@ exports.registerDriverPresenceHandlers = (io, socket) => {
       if (!SHIFTS.includes(shift)) return;
       if (!socket.userId) return;
 
-      const context = await driverProfileFor(socket.userId);
-      if (!context?.profile) return;
+      const result = await applyShiftChange({
+        userId: socket.userId,
+        shift,
+        confirmBack: payload?.confirmBack === true,
+      });
 
-      // Going back online clears the note a dispatcher left when he took the
-      // driver off the line
-      if (shift === "online") {
-        context.profile.shiftNote = null;
-        context.profile.shiftChangedBy = undefined;
-        context.profile.shiftChangedAt = undefined;
+      // A dispatcher took this driver off the line: the reason is repeated
+      // until the driver confirms it explicitly
+      if (result.reason === "locked") {
+        socket.emit("driver:offline", {
+          reason: result.profile.shiftNote,
+          needsConfirmation: true,
+        });
+        return;
       }
-      context.profile.shift = shift;
-      context.profile.lastSeen = new Date();
-      await context.profile.save();
+      if (!result.ok) return;
 
-      emitPresence(io, context.membership.cityId, {
+      emitPresence(io, result.membership.cityId, {
         driverId: String(socket.userId),
         shift,
       });
+      emitShiftState(io, socket.userId, result.membership.cityId, result.profile);
     } catch (error) {
       socket.emit("driver:error", { error: error.message });
     }

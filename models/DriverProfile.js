@@ -39,6 +39,8 @@ const driverProfileSchema = new mongoose.Schema(
     lastSeen: Date,
     // Driver can stop accepting direct calls without leaving the shift
     acceptDirectCalls: { type: Boolean, default: true },
+    // Short "about the driver" line shown to passengers and dispatchers
+    about: { type: String, default: "", maxlength: 160 },
     // Set while a direct call is in progress; hides the driver from the list
     inCall: { type: Boolean, default: false },
     // Cached rating aggregate (avg stars), refreshed on each new rating

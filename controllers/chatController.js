@@ -147,6 +147,8 @@ exports.listMyChats = catchAsyncError(async (req, res) => {
           const last = lastByChat.get(String(chat._id));
           return {
             _id: chat._id,
+            // Order behind the dialog: needed to get call credentials
+            orderId: chat.orderId ?? null,
             peer: peer ? { _id: peer._id, name: peer.name } : { name: "Удалённый пользователь" },
             carCaption: profile?.car
               ? carCaption(profile.car)

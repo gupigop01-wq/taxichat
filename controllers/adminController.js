@@ -69,13 +69,18 @@ const assertApplicationReviewer = async (req, application) => {
     throw new ApiError(403, "Недостаточно прав для рассмотрения этой заявки");
 };
 
-// Creates or reactivates a role membership
+// Approving an application switches the person to that role: he is not given
+// a second role on top of the one he already has in the city
+const { replaceRoleInCity } = require("../utilities/cityRole");
+
 const upsertRoleMembership = async ({ userId, cityId, role, reviewedBy }) => {
-  const membership = await Membership.findOneAndUpdate(
-    { userId, cityId, role },
-    { $set: { status: "ACTIVE", reviewedBy, reason: undefined } },
-    { upsert: true, new: true, setDefaultsOnInsert: true }
-  );
+  const membership = await replaceRoleInCity({
+    userId,
+    cityId,
+    role,
+    status: "ACTIVE",
+    reviewedBy,
+  });
   await recalcCityStatus(cityId);
   return membership;
 };
@@ -251,6 +256,14 @@ exports.setUserBan = [
 
   const banned = req.body?.banned !== false;
   user.banned = banned;
+  // A manual decision replaces any automatic expiry
+  user.banUntil = undefined;
+  user.banReason = banned ? req.body?.reason : undefined;
+  user.bannedAt = banned ? new Date() : undefined;
+  if (!banned) {
+    user.penaltyPoints = 0;
+    user.penaltyAt = undefined;
+  }
   await user.save();
   if (banned) require("../utilities/sockets").disconnectUser(user._id);
 

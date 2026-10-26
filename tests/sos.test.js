@@ -122,23 +122,19 @@ describe("SOS center of the city dispatcher", () => {
 
 describe("passenger phone", () => {
   it("is saved to the account when an order carries it", async () => {
+    // The phone is collected once at registration, not with the order
     const world = await setupPilotCity(app);
+    const stored = await User.findById(world.passenger.user._id);
+    expect(stored.phone).toMatch(/^\+7\d{10}$/);
+
     const created = await request(app)
       .post("/api/orders")
       .set("Cookie", world.passenger.cookie)
       .send({ cityId: world.city._id, route: "Вокзал → Рынок", phone: "8 (902) 111-22-33" });
     expect(created.status).toBe(201);
-    const stored = await User.findById(world.passenger.user._id);
-    expect(stored.phone).toBe("+79021112233");
-  });
-
-  it("rejects a malformed number", async () => {
-    const world = await setupPilotCity(app);
-    const created = await request(app)
-      .post("/api/orders")
-      .set("Cookie", world.passenger.cookie)
-      .send({ cityId: world.city._id, route: "Вокзал → Рынок", phone: "12345" });
-    expect(created.status).toBe(400);
+    // An order can no longer change the contact phone
+    const after = await User.findById(world.passenger.user._id);
+    expect(after.phone).toBe(stored.phone);
   });
 });
 
@@ -212,10 +208,25 @@ describe("operational city settings", () => {
     const saved = await request(app)
       .patch(`/api/dispatch/${world.city._id}/timers`)
       .set("Cookie", world.dispatcher.cookie)
-      .send({ waitingMinutes: 5, cascadeTimeouts: { expire: 900 } });
+      .send({ waitingMinutes: 5, waitingPricePerMin: 12, cascadeTimeouts: { expire: 900 } });
     expect(saved.status).toBe(200);
     expect(saved.body.data.settings.waitingMinutes).toBe(5);
+    expect(saved.body.data.settings.waitingPricePerMin).toBe(12);
     expect(saved.body.data.settings.cascadeTimeouts.expire).toBe(900);
+
+    // 0 is a valid price: the city simply has no paid waiting
+    const disabled = await request(app)
+      .patch(`/api/dispatch/${world.city._id}/timers`)
+      .set("Cookie", world.dispatcher.cookie)
+      .send({ waitingPricePerMin: 0 });
+    expect(disabled.status).toBe(200);
+    expect(disabled.body.data.settings.waitingPricePerMin).toBe(0);
+
+    const negative = await request(app)
+      .patch(`/api/dispatch/${world.city._id}/timers`)
+      .set("Cookie", world.dispatcher.cookie)
+      .send({ waitingPricePerMin: -1 });
+    expect(negative.status).toBe(400);
 
     const tooHuge = await request(app)
       .patch(`/api/dispatch/${world.city._id}/timers`)

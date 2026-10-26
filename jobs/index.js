@@ -71,10 +71,15 @@ const scheduleCascade = async (order) => {
   }
 };
 
-const scheduleWaitingTimer = async (order, waitingMinutes) => {
-  if (!agenda) return;
+// The timer fires when the free window ends. A booking may start its waiting
+// in the future (anchored to the booked time), so the delay is measured from
+// that start rather than from the moment the driver checked in.
+const scheduleWaitingTimer = async (order) => {
+  if (!agenda || !order.waiting?.startedAt) return;
+  const freeMs = Math.max(0, Number(order.waiting.freeMinutes) || 0) * 60 * 1000;
+  const freeEndsAt = new Date(order.waiting.startedAt).getTime() + freeMs;
   await agenda.schedule(
-    new Date(Date.now() + waitingMinutes * 60 * 1000),
+    new Date(Math.max(Date.now(), freeEndsAt)),
     "order:waitingTimeout",
     { orderId: String(order._id) }
   );
@@ -114,6 +119,7 @@ const initJobs = async (mongoUri) => {
   agenda.define("driver:heartbeatSweep", (job) => handlers.runHeartbeatSweep());
   agenda.define("city:recalcStatus", (job) => handlers.runCityStatusRecalc());
   agenda.define("chat:closeDirect", (job) => handlers.runDirectChatCleanup());
+  agenda.define("ai:cleanup", { concurrency: 1 }, (job) => handlers.runAiChatCleanup());
 
   await agenda.start();
 
@@ -121,6 +127,7 @@ const initJobs = async (mongoUri) => {
   await agenda.every("30 seconds", "driver:heartbeatSweep");
   await agenda.every("5 minutes", "city:recalcStatus");
   await agenda.every("5 minutes", "chat:closeDirect");
+  await agenda.every("5 minutes", "ai:cleanup");
 
   return agenda;
 };

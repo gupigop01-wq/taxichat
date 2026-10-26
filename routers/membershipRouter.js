@@ -13,6 +13,8 @@ router
     membershipController.createMembership
   );
 router.route("/mine").get(membershipController.getMyMemberships);
-router.route("/:id").patch(membershipController.updateMembership);
+router.patch("/:id", membershipController.updateMembership);
+// Leaving a role: same body, { leave: true }, handled by the update above
+router.post("/:id", membershipController.updateMembership);
 
 module.exports = router;

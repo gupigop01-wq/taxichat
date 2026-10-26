@@ -36,6 +36,19 @@ const placeSchema = new mongoose.Schema(
   { _id: false }
 );
 
+// Terms are snapshotted from the city settings when the driver arrives, so a
+// rate change or a settings edit never touches a waiting order. endedAt is
+// cleared again if the driver cancels a mistaken ride start.
+const waitingSchema = new mongoose.Schema(
+  {
+    startedAt: Date,
+    freeMinutes: Number,
+    pricePerMin: Number,
+    endedAt: Date,
+  },
+  { _id: false }
+);
+
 // An order is a chat room with a lifecycle (concept 1.6). exactFrom/exactTo
 // stay hidden from drivers until ASSIGNED (see utilities/orderViews).
 const orderSchema = new mongoose.Schema(
@@ -70,6 +83,8 @@ const orderSchema = new mongoose.Schema(
     notes: { type: String, maxlength: 500 },
     // Reference price agreed in chat; no payments involved (concept 1.11)
     priceAgreed: String,
+    // Free/paid waiting terms captured at "Я на месте" (see utilities/waiting)
+    waiting: { type: waitingSchema, default: undefined },
     status: { type: String, enum: ORDER_STATUSES, default: "DRAFT", index: true },
     statusLog: [statusLogSchema],
     matchMode: { type: String, enum: MATCH_MODES, default: "offers" },

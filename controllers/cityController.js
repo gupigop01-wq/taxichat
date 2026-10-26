@@ -15,8 +15,8 @@ const { dayRange } = require("../utilities/cityDay");
 const ShiftHandover = require("../models/ShiftHandover");
 
 // City settings are split by who owns the decision:
-//  - city line and waiting time are operational: the city dispatchers keep
-//    them current, the region admin may also change them;
+//  - city line, waiting window/price and other timers are operational: the
+//    city dispatchers keep them current, the region admin may also change them;
 //  - match mode and contact filtering are policy: region admin / superadmin.
 const canEditCityOps = async (req, cityId) => {
   if (req.user?.isSuperadmin) return true;
@@ -36,6 +36,8 @@ const settingsView = (city) => ({
   dispatchPhoneNote: city.settings?.dispatchPhoneNote ?? "",
   // Timers a shift can change without touching policy
   waitingMinutes: city.settings?.waitingMinutes ?? 10,
+  // 0 rubles means the city has not enabled paid waiting
+  waitingPricePerMin: city.settings?.waitingPricePerMin ?? 0,
   preorderLeadMinutes: city.settings?.preorderLeadMinutes ?? 30,
   directOrderTimeoutMin: city.settings?.directOrderTimeoutMin ?? 10,
   cascadeTimeouts: {
@@ -49,6 +51,12 @@ const settingsView = (city) => ({
 
 const timersSchema = z.object({
   waitingMinutes: z.number().int().min(1, "Минимум 1 минута").max(60, "Максимум 60 минут").optional(),
+  waitingPricePerMin: z
+    .number()
+    .int("Цена указывается целыми рублями")
+    .min(0, "Цена не может быть отрицательной")
+    .max(10000, "Максимум 10000 ₽ за минуту")
+    .optional(),
   preorderLeadMinutes: z.number().int().min(5).max(240).optional(),
   directOrderTimeoutMin: z.number().int().min(1).max(120).optional(),
   cascadeTimeouts: z
@@ -74,8 +82,9 @@ exports.setCityTimers = [
     if (!city) throw new ApiError(404, "Город не найден");
 
     city.settings = city.settings ?? {};
-    const { waitingMinutes, preorderLeadMinutes, directOrderTimeoutMin, cascadeTimeouts } = req.body;
+    const { waitingMinutes, waitingPricePerMin, preorderLeadMinutes, directOrderTimeoutMin, cascadeTimeouts } = req.body;
     if (waitingMinutes !== undefined) city.settings.waitingMinutes = waitingMinutes;
+    if (waitingPricePerMin !== undefined) city.settings.waitingPricePerMin = waitingPricePerMin;
     if (preorderLeadMinutes !== undefined) city.settings.preorderLeadMinutes = preorderLeadMinutes;
     if (directOrderTimeoutMin !== undefined) city.settings.directOrderTimeoutMin = directOrderTimeoutMin;
     if (cascadeTimeouts) {
@@ -191,9 +200,11 @@ exports.forceDriverOffline = [
       await Order.updateOne({ _id: activeOrder._id }, { $set: { driverOfflineNote: req.body.reason } });
     }
 
-    // Tell the driver and the city dashboard at once
+    // Tell the driver and the city dashboard at once. The driver's own client
+    // stops its heartbeat and shows the reason; a shift back needs confirmation
     emitOrderEvents([
-      { room: `user:${membership.userId}`, event: "driver:offline", payload: { reason: req.body.reason } },
+      { room: `user:${membership.userId}`, event: "driver:offline", payload: { reason: req.body.reason, needsConfirmation: true } },
+      { room: `user:${membership.userId}`, event: "driver:presence", payload: { driverId: String(membership.userId), shift: "offline", shiftNote: req.body.reason } },
       { room: `city:${cityId}`, event: "driver:presence", payload: { driverId: String(membership.userId), shift: "offline" } },
     ]);
     void pushService

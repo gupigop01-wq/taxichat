@@ -4,7 +4,6 @@ const { mkdtempSync } = require("fs");
 const os = require("os");
 const path = require("path");
 const { connectTestDb, disconnectTestDb } = require("./db");
-const { registerUser } = require("./helpers");
 
 jest.mock("../utilities/Cloudinary", () => ({
   cloudinary: { uploader: { upload: jest.fn() } },
@@ -20,11 +19,18 @@ for (const key of credentialKeys) delete process.env[key];
 
 const app = require("../app");
 const { cloudinary } = require("../utilities/Cloudinary");
+const { setupPilotCity, createOrder } = require("./orderSetup");
 let cookie;
+let world;
+let orderId;
 
 beforeAll(async () => {
   await connectTestDb();
-  cookie = (await registerUser(app)).cookie;
+  // Media belongs to a conversation: uploads run as a participant of an order
+  world = await setupPilotCity(app);
+  cookie = world.passenger.cookie;
+  const created = await createOrder(app, world.passenger, world.city);
+  orderId = created.body.data.order._id;
 });
 
 beforeEach(async () => {
@@ -57,9 +63,10 @@ const parseBinary = (res, callback) => {
   res.on("end", () => callback(null, Buffer.concat(chunks)));
 };
 
-const uploadFile = (fileType, mime, bytes) => request(app).post("/api/upload").set("Cookie", cookie).send({
+const uploadFile = (fileType, mime, bytes, context = { orderId }) => request(app).post("/api/upload").set("Cookie", cookie).send({
   data: `data:${mime};base64,${bytes.toString("base64")}`,
   fileType,
+  ...context,
 });
 
 const webm = Buffer.from([0x1a, 0x45, 0xdf, 0xa3, 0x9f, 0x42, 0x86, 0x81]);
@@ -92,12 +99,60 @@ describe("local media uploads", () => {
   });
 
   it("requires authentication for uploads and downloads", async () => {
-    const body = { fileType: "image", data: "data:image/png;base64,SGk=" };
+    const body = { fileType: "image", data: "data:image/png;base64,SGk=", orderId };
     expect((await request(app).post("/api/upload").send(body)).status).toBe(401);
     const uploaded = await uploadFile("image", "image/png", Buffer.from("test"));
     const url = uploaded.body.data.uploadData.secure_url;
     expect((await request(app).get(url)).status).toBe(401);
     expect((await request(app).get(url).set("Cookie", "telegramToken=invalid")).status).toBe(401);
+  });
+
+  it("only stores media for a conversation the caller takes part in", async () => {
+    const image = Buffer.from("test-party");
+    const strangerUpload = (body) =>
+      request(app).post("/api/upload").set("Cookie", world.drivers[0].cookie).send(body);
+
+    // No order and no chat reference: nothing to attach the file to
+    expect((await strangerUpload({
+      fileType: "image",
+      data: `data:image/png;base64,${image.toString("base64")}`,
+    })).status).toBe(400);
+
+    // A driver who is not assigned to the order cannot use it either
+    expect((await uploadFile("image", "image/png", image, { orderId })
+      .set("Cookie", world.drivers[0].cookie)).status).toBe(403);
+
+    // A foreign chat is rejected the same way
+    expect((await uploadFile("image", "image/png", image, { chatId: "0".repeat(24) })
+      .set("Cookie", world.passenger.cookie)).status).toBe(403);
+
+    expect(await fs.readdir(uploadDirectory)).toEqual([]);
+  });
+
+  it("rejects media for a chat of another city", async () => {
+    const Chat = require("../models/Chat");
+    const City = require("../models/City");
+    const mongoose = require("mongoose");
+
+    // Home membership of another city would normally be the only ACTIVE one
+    const foreignCity = await City.create({
+      name: `Чат-город ${Date.now()}`,
+      status: "PILOT",
+      oktmo: String(Date.now()).slice(0, 8),
+      regionId: world.city.regionId ?? new mongoose.Types.ObjectId(),
+    });
+    const chat = await Chat.create({
+      type: "direct",
+      cityId: foreignCity._id,
+      members: [world.passenger.user._id, world.drivers[1].user._id],
+    });
+
+    const response = await uploadFile("image", "image/png", Buffer.from("foreign"), {
+      chatId: String(chat._id),
+    });
+    expect(response.status).toBe(403);
+    expect(await fs.readdir(uploadDirectory)).toEqual([]);
+    await City.deleteOne({ _id: foreignCity._id });
   });
 
   it.each(["audio/wav", "audio/mp3", "audio/webm;codecs=opus"])(
@@ -194,7 +249,7 @@ describe("upload validation", () => {
     { fileType: "image", data: "data:image/png;base64,A" },
     { fileType: "image", data: "data:image/png;base64,AB==" },
   ])("rejects malformed or unsupported request %#", async (body) => {
-    const response = await request(app).post("/api/upload").set("Cookie", cookie).send(body);
+    const response = await request(app).post("/api/upload").set("Cookie", cookie).send({ orderId, ...body });
     expect(response.status).toBe(400);
     expect(cloudinary.uploader.upload).not.toHaveBeenCalled();
     expect(await fs.readdir(uploadDirectory)).toEqual([]);

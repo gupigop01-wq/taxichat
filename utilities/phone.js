@@ -2,15 +2,14 @@
 // dispatcher can dial them directly and comparisons never break on spacing.
 const RU_PHONE = /^\+7\d{10}$/;
 
-// Accepts "+7 902 111 22 33", "8 (902) 111-22-33", "79021112233" and
-// normalises them to "+79021112233". Returns null for anything else.
+// Accepts "+7 902 111 22 33", "8 (902) 111-22-33", "79021112233" and returns
+// "+79021112233". A bare 10-digit number is intentionally NOT accepted: it is
+// a common typo for "8XXXXXXXXXX" and would silently become another
+// subscriber's number, which the dispatcher would then dial.
 const normalizePhone = (raw) => {
   if (typeof raw !== "string") return null;
   const digits = raw.replace(/\D/g, "");
   if (digits.length === 11 && (digits.startsWith("7") || digits.startsWith("8"))) {
-    return `+7${digits.slice(1)}`;
-  }
-  if (/^\+7/.test(raw.trim()) && digits.length === 11 && digits.startsWith("7")) {
     return `+7${digits.slice(1)}`;
   }
   return null;
